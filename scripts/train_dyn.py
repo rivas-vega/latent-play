@@ -246,17 +246,23 @@ def main() -> None:
     step = 0
     if (ck := latest_checkpoint(out)) is not None:
         state = load_checkpoint(ck, device)
-        model.load_state_dict(state["model"])
-        ema.load_state_dict(state["ema"])
-        opt.load_state_dict(state["opt"])
-        if "scaler" in state:
-            scaler.load_state_dict(state["scaler"])
-        if decoder and "decoder" in state and state["decoder"] is not None:
-            decoder.load_state_dict(state["decoder"])
-        if dec_opt and "dec_opt" in state and state["dec_opt"] is not None:
-            dec_opt.load_state_dict(state["dec_opt"])
-        step = state["step"]
-        print(f"resumed from {ck} at step {step}")
+        try:
+            model.load_state_dict(state["model"])
+            ema.load_state_dict(state["ema"])
+            opt.load_state_dict(state["opt"])
+            if "scaler" in state:
+                scaler.load_state_dict(state["scaler"])
+            if decoder and "decoder" in state and state["decoder"] is not None:
+                decoder.load_state_dict(state["decoder"])
+            if dec_opt and "dec_opt" in state and state["dec_opt"] is not None:
+                dec_opt.load_state_dict(state["dec_opt"])
+            step = state["step"]
+            print(f"resumed from {ck} at step {step}")
+        except RuntimeError as e:
+            print(f"Discarding incompatible checkpoint {ck} ({e}); starting fresh from step 0.")
+            for old_pt in out.glob("*.pt"):
+                old_pt.unlink(missing_ok=True)
+            step = 0
 
     logger = JsonlLogger(out / "log.jsonl")
     last_ckpt = time.time()

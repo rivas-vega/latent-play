@@ -137,11 +137,17 @@ def main() -> None:
     step = 0
     if (ck := latest_checkpoint(out)) is not None:
         state = load_checkpoint(ck, device)
-        model.load_state_dict(state["model"])
-        opt.load_state_dict(state["opt"])
-        scaler.load_state_dict(state["scaler"])
-        step = state["step"]
-        print(f"resumed from {ck} at step {step}")
+        try:
+            model.load_state_dict(state["model"])
+            opt.load_state_dict(state["opt"])
+            scaler.load_state_dict(state["scaler"])
+            step = state["step"]
+            print(f"resumed from {ck} at step {step}")
+        except RuntimeError as e:
+            print(f"Discarding incompatible checkpoint {ck} ({e}); starting fresh from step 0.")
+            for old_pt in out.glob("*.pt"):
+                old_pt.unlink(missing_ok=True)
+            step = 0
     fwd = torch.compile(model) if tc["compile"] else model
 
     logger = JsonlLogger(out / "log.jsonl")
