@@ -29,7 +29,7 @@ from latent_play.utils.train import JsonlLogger, autocast_ctx, cosine_lr, infini
 
 DEFAULT_TRAIN = {
     "batch_size": 64, "lr": 3e-4, "weight_decay": 0.05, "steps": 5000, "warmup": 500, "grad_clip": 1.0,
-    "log_every": 50, "eval_every": 500, "eval_batches": 20, "ckpt_every_min": 15.0, "num_workers": 4,
+    "log_every": 50, "eval_every": 500, "eval_batches": 20, "ckpt_every_min": 5.0, "num_workers": 4,
     "amp": "auto", "compile": False, "seed": 0, "out_dir": "checkpoints/lam",
 }
 

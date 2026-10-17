@@ -63,7 +63,7 @@ DEFAULT_TRAIN = {
     "log_every": 50,
     "eval_every": 1000,
     "eval_batches": 20,
-    "ckpt_every_min": 15.0,
+    "ckpt_every_min": 5.0,
     "num_workers": 4,
     "amp": "auto",
     "compile": False,
@@ -249,8 +249,12 @@ def main() -> None:
         model.load_state_dict(state["model"])
         ema.load_state_dict(state["ema"])
         opt.load_state_dict(state["opt"])
-        if decoder and "decoder" in state:
+        if "scaler" in state:
+            scaler.load_state_dict(state["scaler"])
+        if decoder and "decoder" in state and state["decoder"] is not None:
             decoder.load_state_dict(state["decoder"])
+        if dec_opt and "dec_opt" in state and state["dec_opt"] is not None:
+            dec_opt.load_state_dict(state["dec_opt"])
         step = state["step"]
         print(f"resumed from {ck} at step {step}")
 
@@ -357,6 +361,8 @@ def main() -> None:
             }
             if decoder is not None:
                 save_payload["decoder"] = decoder.state_dict()
+            if dec_opt is not None:
+                save_payload["dec_opt"] = dec_opt.state_dict()
             save_checkpoint(out, save_payload, step)
             last_ckpt = time.time()
 
