@@ -2,9 +2,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-data/
-checkpoints/
-outputs/
+/data/
+/checkpoints/
+/outputs/
 wandb/
 *.egg-info/
 **/*.aux
