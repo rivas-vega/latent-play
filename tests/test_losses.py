@@ -3,6 +3,7 @@ import torch
 from latent_play.losses import (
     effective_rank,
     jepa_loss,
+    sigreg_loss,
     vicreg_covariance_loss,
     vicreg_variance_loss,
 )
@@ -45,8 +46,21 @@ def test_vicreg_covariance_loss():
 def test_jepa_loss_backward():
     pred_z = torch.randn(4, 8, 32, requires_grad=True)
     target_z = torch.randn(4, 8, 32)
-    out = jepa_loss(pred_z, target_z, loss_type="l1", vicreg_var_weight=0.1)
-    assert "loss" in out and "eff_rank" in out
+    out = jepa_loss(pred_z, target_z, loss_type="l1", vicreg_var_weight=0.1, sigreg_weight=0.05)
+    assert "loss" in out and "eff_rank" in out and "sigreg_loss" in out
     out["loss"].backward()
     assert pred_z.grad is not None
     assert pred_z.grad.abs().sum() > 0
+
+
+def test_sigreg_loss():
+    torch.manual_seed(0)
+    z_gauss = torch.randn(200, 16)
+    loss_gauss = sigreg_loss(z_gauss, num_slices=32)
+
+    z_collapsed = torch.zeros(200, 16)
+    loss_collapsed = sigreg_loss(z_collapsed, num_slices=32)
+
+    assert loss_gauss.item() < loss_collapsed.item()
+    assert loss_gauss.item() < 0.05
+    assert loss_collapsed.item() > 0.08

@@ -3,7 +3,8 @@
 Connects directly to the mathematical foundations of representation collapse
 and non-contrastive self-supervised learning:
 - Pure EMA (target network stop-gradient, Grill et al. 2020 / Assran et al. 2023)
-- VICReg variance regularization (Bardes et al. 2022) to enforce dimension spread
+- VICReg variance & covariance regularization (Bardes et al. 2022)
+- Statistical Invariant Geometric Regularizer (SIGReg) via Cramér-Wold & Epps-Pulley test (Balestriero, LeCun et al. 2025/2026)
 - Effective rank diagnostic (Roy & Vetterli 2007) to quantify representation collapse
 """
 
@@ -22,7 +23,6 @@ def effective_rank(z: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
     if z.shape[0] < 2:
         return torch.tensor(1.0, device=z.device)
     z_centered = z - z.mean(dim=0, keepdim=True)
-    # Fast SVD or covariance eigendecomposition
     try:
         _, s, _ = torch.linalg.svd(z_centered, full_matrices=False)
         p = s / (s.sum() + eps)
@@ -52,12 +52,41 @@ def vicreg_covariance_loss(z: torch.Tensor) -> torch.Tensor:
     return off_diag.pow(2).sum() / D
 
 
+def sigreg_loss(z: torch.Tensor, num_slices: int = 64) -> torch.Tensor:
+    r"""Statistical Invariant Geometric Regularizer (SIGReg).
+
+    Based on the Cramér-Wold theorem and the differentiable Epps-Pulley test statistic (1983):
+        T_{EP}(h) = 1 + \frac{\sqrt{2}}{n^2} \sum_{j,k} e^{-(h_j - h_k)^2 / 4} - \frac{4}{\sqrt{3} n} \sum_j e^{-h_j^2 / 6}
+
+    Projecting representations z against random unit vectors u ~ S^{D-1} and testing
+    each 1D projection against N(0, 1) guarantees by Cramér-Wold that the full
+    multivariate representation converges to an isotropic standard Gaussian N(0, I_D).
+    """
+    N, D = z.shape
+    if N < 2:
+        return torch.tensor(0.0, device=z.device)
+
+    u = torch.randn(D, num_slices, device=z.device, dtype=z.dtype)
+    u = F.normalize(u, dim=0)  # Random unit vectors on S^{D-1}
+    h = z @ u  # [N, num_slices]
+
+    diff = h.unsqueeze(1) - h.unsqueeze(0)  # [N, N, num_slices]
+    sqrt2 = 1.4142135623730951
+    sqrt3 = 1.7320508075688772
+
+    t2 = (sqrt2 / (N * N)) * torch.exp(-diff.pow(2) / 4.0).sum(dim=(0, 1))
+    t3 = (4.0 / (sqrt3 * N)) * torch.exp(-h.pow(2) / 6.0).sum(dim=0)
+    tep = 1.0 + t2 - t3  # [num_slices]
+    return tep.mean()
+
+
 def jepa_loss(
     pred_z: torch.Tensor,
     target_z: torch.Tensor,
     loss_type: str = "l1",
     vicreg_var_weight: float = 0.0,
     vicreg_cov_weight: float = 0.0,
+    sigreg_weight: float = 0.0,
 ) -> dict[str, torch.Tensor]:
     """JEPA prediction loss against target encoder representation (stop-gradient on target).
 
@@ -67,9 +96,10 @@ def jepa_loss(
         loss_type: "l1", "smooth_l1", or "cosine"
         vicreg_var_weight: weight for variance anti-collapse loss on online representations
         vicreg_cov_weight: weight for covariance decorrelation loss
+        sigreg_weight: weight for SIGReg Cramér-Wold isotropic Gaussian regularization
 
     Returns:
-        dict with total loss, pred_loss, var_loss, cov_loss, eff_rank
+        dict with total loss, pred_loss, var_loss, cov_loss, sigreg_loss, eff_rank
     """
     flat_pred = pred_z.reshape(-1, pred_z.shape[-1])
     flat_target = target_z.reshape(-1, target_z.shape[-1]).detach()
@@ -85,8 +115,9 @@ def jepa_loss(
 
     var_err = vicreg_variance_loss(flat_pred) if vicreg_var_weight > 0 else torch.tensor(0.0, device=pred_z.device)
     cov_err = vicreg_covariance_loss(flat_pred) if vicreg_cov_weight > 0 else torch.tensor(0.0, device=pred_z.device)
+    sig_err = sigreg_loss(flat_pred) if sigreg_weight > 0 else torch.tensor(0.0, device=pred_z.device)
 
-    total = pred_err + vicreg_var_weight * var_err + vicreg_cov_weight * cov_err
+    total = pred_err + vicreg_var_weight * var_err + vicreg_cov_weight * cov_err + sigreg_weight * sig_err
     erank = effective_rank(flat_pred)
 
     return {
@@ -94,5 +125,6 @@ def jepa_loss(
         "pred_loss": pred_err,
         "var_loss": var_err,
         "cov_loss": cov_err,
+        "sigreg_loss": sig_err,
         "eff_rank": erank,
     }

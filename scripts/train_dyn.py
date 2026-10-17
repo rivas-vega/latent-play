@@ -73,6 +73,7 @@ DEFAULT_TRAIN = {
     "tau_end": 1.0,
     "loss_type": "l1",
     "vicreg_var_weight": 0.0,
+    "sigreg_weight": 0.0,
     "train_decoder": True,
     "decoder_lr": 3e-4,
 }
@@ -287,6 +288,7 @@ def main() -> None:
                 target_z,
                 loss_type=tc["loss_type"],
                 vicreg_var_weight=tc["vicreg_var_weight"],
+                sigreg_weight=tc["sigreg_weight"],
             )
             total_loss = loss_dict["loss"]
 
