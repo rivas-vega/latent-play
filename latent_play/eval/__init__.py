@@ -1,5 +1,10 @@
 from .probes import code_action_stats, visible_actions
-from .voe import compute_voe_score, inject_disappearance_violation, inject_teleport_violation
+from .voe import (
+    compute_voe_score,
+    inject_action_contradiction_violation,
+    inject_disappearance_violation,
+    inject_teleport_violation,
+)
 
 __all__ = [
     "code_action_stats",
@@ -7,4 +12,5 @@ __all__ = [
     "compute_voe_score",
     "inject_teleport_violation",
     "inject_disappearance_violation",
+    "inject_action_contradiction_violation",
 ]

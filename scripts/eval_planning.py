@@ -40,27 +40,33 @@ def run_goal_episode(
     """Executes a single goal-conditioned evaluation episode."""
     obs_0, info_0 = env.reset()
     start_pos = info_0["pos"].copy()
+    init_state = env.clone_state()
 
-    # Generate reachable goal by taking actions from current state
+    # Generate reachable goal by taking movement actions from current state
     goal_obs = obs_0
-    goal_pos = start_pos
+    goal_pos = start_pos.copy()
     actions_taken = []
     for _ in range(target_dist):
-        a = np.random.choice(env.movement_actions)
+        a = int(np.random.choice(env.movement_actions))
         goal_obs, _, _, g_info = env.step(a)
-        goal_pos = g_info["pos"]
+        goal_pos = g_info["pos"].copy()
         actions_taken.append(a)
+
+    # Ensure goal is not identical to start position
+    extra_tries = 0
+    while np.array_equal(goal_pos, start_pos) and extra_tries < 10:
+        a = int(np.random.choice(env.movement_actions))
+        goal_obs, _, _, g_info = env.step(a)
+        goal_pos = g_info["pos"].copy()
+        actions_taken.append(a)
+        extra_tries += 1
 
     # Encode goal into representation space: [1, N, D]
     t_goal = frames_to_float(torch.from_numpy(goal_obs).permute(2, 0, 1).unsqueeze(0).unsqueeze(0)).to(device)
     z_goal = model.encode(t_goal)[:, 0]
 
-    # Reset environment back to starting state
-    obs, info = env.reset()
-    # In toy env, force exact agent start position if needed
-    if hasattr(env, "_agent"):
-        env._agent = start_pos.copy()
-        obs = env._render()
+    # Restore environment back to the exact starting state x_0 (same world, background, and entities)
+    obs, info = env.restore_state(init_state)
 
     frames_history = [obs]
     success = False
@@ -106,6 +112,10 @@ def main() -> None:
     ap.add_argument("--num-episodes", type=int, default=10)
     ap.add_argument("--target-dist", type=int, default=6)
     ap.add_argument("--max-steps", type=int, default=16)
+    ap.add_argument("--horizon", type=int, default=6)
+    ap.add_argument("--num-samples", type=int, default=64)
+    ap.add_argument("--num-elites", type=int, default=8)
+    ap.add_argument("--iterations", type=int, default=3)
     ap.add_argument("--out-dir", default="outputs/eval_planning")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
@@ -114,11 +124,11 @@ def main() -> None:
     device = get_device()
     cfg = yaml.safe_load(open(args.config))
 
-    mcfg = DynamicsConfig(**cfg.get("model", {}))
-    model = JEPADynamics(mcfg).to(device).eval()
     ckpt = load_checkpoint(args.checkpoint, device)
+    mcfg = DynamicsConfig(**ckpt.get("model_cfg", cfg.get("model", {})))
+    model = JEPADynamics(mcfg).to(device).eval()
     model.load_state_dict(ckpt["model"])
-    print(f"loaded dynamics from {args.checkpoint}")
+    print(f"loaded dynamics from {args.checkpoint} (num_actions={mcfg.num_actions})")
 
     alignment = None
     if args.alignment_checkpoint:
@@ -132,10 +142,10 @@ def main() -> None:
 
     planner = CEMPlanner(
         dynamics=model,
-        horizon=8,
-        num_samples=128,
-        num_elites=16,
-        iterations=4,
+        horizon=args.horizon,
+        num_samples=args.num_samples,
+        num_elites=args.num_elites,
+        iterations=args.iterations,
         alignment=alignment,
     )
 

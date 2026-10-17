@@ -33,6 +33,8 @@ class VisualDecoder(nn.Module):
         self.image_size = image_size
         self.patch = patch
         self.num_patches = (image_size // patch) ** 2
+        self.pos_space = nn.Parameter(torch.zeros(1, self.num_patches, dim))
+        nn.init.trunc_normal_(self.pos_space, std=0.02)
         self.blocks = nn.ModuleList([TransformerBlock(dim, heads, mlp_ratio) for _ in range(depth)])
         self.norm = nn.LayerNorm(dim)
         self.head = nn.Linear(dim, patch * patch * out_channels)
@@ -48,7 +50,7 @@ class VisualDecoder(nn.Module):
             B, N, D = z.shape
             T = 1
 
-        h = z
+        h = z + self.pos_space
         for blk in self.blocks:
             h = blk(h, causal=False)
         h = self.norm(h)

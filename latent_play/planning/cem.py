@@ -83,9 +83,12 @@ class CEMPlanner:
             traj = self.dynamics.rollout(z_init, actions)
             z_final = traj[:, -1]  # [M, ...]
 
-            # Cost: L1 distance in representation space to z_goal
-            # z_goal is [1, ...], broadcasts to [M, ...]
-            costs = (z_final.float() - z_goal.float()).abs().flatten(1).mean(dim=1)  # [M]
+            # Cost: combination of terminal distance and closest approach along the horizon
+            # This ensures goals closer than H steps are reached immediately without overshooting.
+            step_dists = (traj.float() - z_goal.unsqueeze(1).float()).abs().flatten(2).mean(dim=2)  # [M, H]
+            min_dist = step_dists.min(dim=1).values
+            final_dist = (z_final.float() - z_goal.float()).abs().flatten(1).mean(dim=1)
+            costs = 0.5 * final_dist + 0.5 * min_dist
 
             # Find elites (lowest cost)
             elite_idx = costs.argsort()[: self.num_elites]
@@ -108,7 +111,8 @@ class CEMPlanner:
         # If planning in latent action space, translate first action to real environment action
         if self.alignment is not None:
             code_t = torch.tensor([first_action_id], device=device)
-            real_action = int(self.alignment.predict_action(code_t).item())
+            z_ctx = z_curr if self.alignment.use_state_context else None
+            real_action = int(self.alignment.predict_action(code_t, z=z_ctx).item())
             return real_action, best_seq
 
         return first_action_id, best_seq

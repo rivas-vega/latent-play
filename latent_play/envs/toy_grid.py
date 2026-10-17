@@ -72,6 +72,26 @@ class ToyGridEnv:
         done = self._t >= self.max_steps
         return self._render(), 0.0, done, self._info()
 
+    def clone_state(self) -> dict:
+        """Captures the exact environment state (background, agent, distractor, RNG) for reproducible resets."""
+        assert self._background is not None, "call reset() first"
+        return {
+            "background": self._background.copy(),
+            "agent": self._agent.copy(),
+            "distractor": self._distractor.copy(),
+            "t": self._t,
+            "rng_state": dict(self._rng.bit_generator.state),
+        }
+
+    def restore_state(self, state: dict) -> tuple[np.ndarray, dict]:
+        """Restores a previously cloned environment state and returns (obs, info)."""
+        self._background = state["background"].copy()
+        self._agent = state["agent"].copy()
+        self._distractor = state["distractor"].copy()
+        self._t = int(state["t"])
+        self._rng.bit_generator.state = state["rng_state"]
+        return self._render(), self._info()
+
     # ------------------------------------------------------------- internals
     def _info(self) -> dict:
         return {"pos": self._agent.copy(), "t": self._t}

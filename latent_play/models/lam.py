@@ -64,8 +64,24 @@ class LatentActionModel(nn.Module):
     # ------------------------------------------------------------ inference
     def encode(self, frames: torch.Tensor) -> torch.Tensor:
         """frames [B, T, 3, H, W] in [-1, 1] -> continuous actions [B, T-1, code_dim]."""
-        h = self.encoder(self.enc_embed(frames))
-        return self.to_action(h[:, 1:].mean(dim=2))
+        B, T, C, H, W = frames.shape
+        max_f = self.cfg.num_frames
+        if T <= max_f:
+            h = self.encoder(self.enc_embed(frames))
+            return self.to_action(h[:, 1:].mean(dim=2))
+
+        # For longer sequences (e.g. T=8 or 16 in dynamics training), slide a window of length max_f
+        pad_len = max_f - 2
+        if pad_len > 0:
+            padded = torch.cat([frames[:, :1].expand(B, pad_len, C, H, W), frames], dim=1)
+        else:
+            padded = frames
+        # Build (T - 1) windows of length max_f: [B, T-1, max_f, C, H, W]
+        windows = torch.stack([padded[:, i : i + max_f] for i in range(T - 1)], dim=1)
+        flat_win = windows.reshape(B * (T - 1), max_f, C, H, W)
+        h = self.encoder(self.enc_embed(flat_win))  # [B*(T-1), max_f, N, D]
+        out = self.to_action(h[:, -1].mean(dim=1))  # [B*(T-1), code_dim]
+        return out.reshape(B, T - 1, -1)
 
     def infer_actions(self, frames: torch.Tensor) -> dict[str, torch.Tensor]:
         return self.vq(self.encode(frames))

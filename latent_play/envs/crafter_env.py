@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import numpy as np
 
 CRAFTER_ACTIONS = (
@@ -41,3 +42,13 @@ class CrafterEnv:
         obs, reward, done, info = self._env.step(int(action))
         out = {"pos": np.asarray(info["player_pos"], dtype=np.int64).copy(), "t": self._env._step}
         return obs, float(reward), bool(done), out
+
+    def clone_state(self):
+        """Deep-copies the internal Crafter world state so goal rollouts can be rewound to t=0."""
+        return copy.deepcopy(self._env)
+
+    def restore_state(self, state) -> tuple[np.ndarray, dict]:
+        """Restores a previously cloned Crafter world state and returns (obs, info)."""
+        self._env = copy.deepcopy(state)
+        obs = self._env.render()
+        return obs, {"pos": np.asarray(self._env._player.pos, dtype=np.int64).copy(), "t": self._env._step}

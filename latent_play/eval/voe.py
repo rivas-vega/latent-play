@@ -43,6 +43,15 @@ def inject_disappearance_violation(frames: torch.Tensor) -> torch.Tensor:
     return violated
 
 
+def inject_action_contradiction_violation(frames: torch.Tensor) -> torch.Tensor:
+    """Simulates an action-contradicting transition by reversing temporal motion in the second half."""
+    violated = frames.clone()
+    T = frames.shape[1]
+    mid = T // 2
+    violated[:, mid:] = torch.flip(violated[:, : T - mid], dims=[1])
+    return violated
+
+
 @torch.no_grad()
 def compute_voe_score(
     model: JEPADynamics,
@@ -50,38 +59,42 @@ def compute_voe_score(
     actions: torch.Tensor,
     violation_type: str = "teleport",
 ) -> dict[str, float]:
-    """Computes VoE surprise metrics for plausible vs. violated video clips.
+    """Computes VoE surprise metrics for plausible vs. violated video clips at the violation onset.
 
     Args:
         model: JEPADynamics model
         frames: [B, T, 3, H, W] clean video frames in [-1, 1]
         actions: [B, T-1] action sequence
-        violation_type: "teleport" or "disappearance"
+        violation_type: "teleport", "disappearance", or "contradiction"
 
     Returns:
         dict with plausible surprise, violated surprise, and VoE ratio
     """
     model.eval()
     B, T = frames.shape[:2]
+    mid = max(1, T // 2)
+    onset = min(mid - 1, actions.shape[1] - 1)
 
     # Clean plausible trajectory
     z_clean = model.encode(frames)
     pred_clean = model(z_clean[:, :-1], actions)
     target_clean = z_clean[:, 1:]
-    surprise_plausible = F.l1_loss(pred_clean, target_clean).item()
+    surprise_plausible = F.l1_loss(pred_clean[:, onset], target_clean[:, onset]).item()
 
     # Violated trajectory
     if violation_type == "teleport":
         v_frames = inject_teleport_violation(frames)
     elif violation_type == "disappearance":
         v_frames = inject_disappearance_violation(frames)
+    elif violation_type == "contradiction":
+        v_frames = inject_action_contradiction_violation(frames)
     else:
         raise ValueError(f"Unknown violation type: {violation_type}")
 
     z_violated = model.encode(v_frames)
     pred_violated = model(z_violated[:, :-1], actions)
     target_violated = z_violated[:, 1:]
-    surprise_violated = F.l1_loss(pred_violated, target_violated).item()
+    surprise_violated = F.l1_loss(pred_violated[:, onset], target_violated[:, onset]).item()
 
     ratio = surprise_violated / max(1e-6, surprise_plausible)
 

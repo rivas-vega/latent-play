@@ -56,5 +56,20 @@ def test_crafter_wrapper():
     env = make_env("crafter", seed=0, size=64)
     obs, info = env.reset()
     assert obs.shape == (64, 64, 3) and obs.dtype == np.uint8
-    obs, r, done, info = env.step(1)
-    assert info["pos"].shape == (2,) and isinstance(done, bool)
+    state = env.clone_state()
+    obs_step, r, done, info_step = env.step(1)
+    assert info_step["pos"].shape == (2,) and isinstance(done, bool)
+    obs_restored, info_restored = env.restore_state(state)
+    np.testing.assert_array_equal(obs, obs_restored)
+    np.testing.assert_array_equal(info["pos"], info_restored["pos"])
+
+
+def test_toy_clone_and_restore_state():
+    env = ToyGridEnv(seed=11)
+    obs0, info0 = env.reset()
+    state = env.clone_state()
+    for a in [1, 2, 3, 4]:
+        env.step(a)
+    obs_r, info_r = env.restore_state(state)
+    np.testing.assert_array_equal(obs0, obs_r)
+    np.testing.assert_array_equal(info0["pos"], info_r["pos"])

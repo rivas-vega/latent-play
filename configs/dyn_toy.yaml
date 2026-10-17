@@ -23,6 +23,7 @@ train:
   tau_start: 0.99
   tau_end: 1.0
   loss_type: l1
-  vicreg_var_weight: 0.0
+  vicreg_var_weight: 0.05
+  sigreg_weight: 0.05
   train_decoder: true
   out_dir: checkpoints/dyn_toy

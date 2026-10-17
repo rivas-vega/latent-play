@@ -64,3 +64,26 @@ def test_sigreg_loss():
     assert loss_gauss.item() < loss_collapsed.item()
     assert loss_gauss.item() < 0.05
     assert loss_collapsed.item() > 0.08
+
+
+def test_jepa_loss_4d_online_z_and_valid_mask():
+    # Simulate 4D spatial-temporal tensor [B=8, T=8, N=64, D=32] -> 4096 tokens
+    online_z = torch.randn(8, 8, 64, 32, requires_grad=True)
+    pred_z = torch.randn(8, 8, 64, 32, requires_grad=True)
+    target_z = torch.randn(8, 8, 64, 32)
+    valid_mask = torch.zeros(8, 8, dtype=torch.bool)
+    valid_mask[:, :2] = True
+
+    out = jepa_loss(
+        pred_z,
+        target_z,
+        online_z=online_z,
+        valid_mask=valid_mask,
+        vicreg_var_weight=0.05,
+        vicreg_cov_weight=0.05,
+        sigreg_weight=0.05,
+    )
+    out["loss"].backward()
+    assert online_z.grad is not None and online_z.grad.abs().sum() > 0
+    assert pred_z.grad is not None and pred_z.grad[:, :2].abs().sum() > 0
+    assert pred_z.grad[:, 2:].abs().sum() == 0

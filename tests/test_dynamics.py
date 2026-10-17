@@ -55,3 +55,25 @@ def test_visual_decoder():
     z_seq = torch.randn(2, 4, 16, 32)
     reconstructed_seq = decoder(z_seq)
     assert reconstructed_seq.shape == (2, 4, 3, 32, 32)
+
+
+def test_jepa_dynamics_causality_and_unlabelled_actions():
+    torch.manual_seed(0)
+    model = JEPADynamics(TINY_DYN).eval()
+    z = torch.randn(2, 4, 16, 32)
+    actions = torch.tensor([[0, 1, -1, 3], [2, -1, 4, 1]])  # includes -1 unlabelled actions
+
+    pred_a = model(z, actions)
+    # Perturb future frame t=3 and action t=3: predictions at t=0, 1, 2 must be strictly identical
+    z_b = z.clone()
+    z_b[:, 3] = torch.randn_like(z_b[:, 3])
+    actions_b = actions.clone()
+    actions_b[:, 3] = 4
+    pred_b = model(z_b, actions_b)
+    torch.testing.assert_close(pred_a[:, :3], pred_b[:, :3])
+
+    # Perturb patch 15 in frame t=0: patch 0 in frame t=0 must see it (spatial bidirectionality)
+    z_c = z.clone()
+    z_c[:, 0, 15] = torch.randn_like(z_c[:, 0, 15])
+    pred_c = model(z_c, actions)
+    assert not torch.allclose(pred_a[:, 0, 0], pred_c[:, 0, 0])

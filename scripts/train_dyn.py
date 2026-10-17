@@ -73,6 +73,7 @@ DEFAULT_TRAIN = {
     "tau_end": 1.0,
     "loss_type": "l1",
     "vicreg_var_weight": 0.0,
+    "vicreg_cov_weight": 0.0,
     "sigreg_weight": 0.0,
     "train_decoder": True,
     "decoder_lr": 3e-4,
@@ -266,13 +267,15 @@ def main() -> None:
         batch = next(batches)
         raw_frames = frames_to_float(batch["frames"].to(device, non_blocking=True))  # [B, T, 3, H, W]
 
-        # Determine actions: discrete code from LAM or dataset action
+        # Determine actions: discrete code from LAM or dataset action (respecting label_fraction!)
         if lam is not None:
             with torch.no_grad():
                 with autocast_ctx(device, tc["amp"]):
                     actions = lam.infer_actions(raw_frames)["indices"]  # [B, T-1]
+            valid_mask = None
         else:
-            actions = batch["action_true"].to(device)  # [B, T-1]
+            actions = batch["action"].to(device)  # [B, T-1], -1 where unlabelled
+            valid_mask = actions >= 0 if dc.get("label_fraction", 1.0) < 1.0 else None
 
         with autocast_ctx(device, tc["amp"]):
             # Target representation computed with EMA target encoder
@@ -286,8 +289,11 @@ def main() -> None:
             loss_dict = jepa_loss(
                 pred_z,
                 target_z,
+                online_z=online_z,
+                valid_mask=valid_mask,
                 loss_type=tc["loss_type"],
                 vicreg_var_weight=tc["vicreg_var_weight"],
+                vicreg_cov_weight=tc["vicreg_cov_weight"],
                 sigreg_weight=tc["sigreg_weight"],
             )
             total_loss = loss_dict["loss"]
@@ -320,6 +326,8 @@ def main() -> None:
                 "loss": total_loss.item(),
                 "pred_loss": loss_dict["pred_loss"].item(),
                 "var_loss": loss_dict["var_loss"].item(),
+                "cov_loss": loss_dict["cov_loss"].item(),
+                "sigreg_loss": loss_dict["sigreg_loss"].item(),
                 "eff_rank": loss_dict["eff_rank"].item(),
                 "tau": tau,
                 "gnorm": gnorm.item(),

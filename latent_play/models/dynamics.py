@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .layers import Attention, MLP, PatchEmbed, TransformerBlock, _init_weights
+from .layers import Attention, MLP, PatchEmbed, STBlock, TransformerBlock, _init_weights
 
 
 @dataclass
@@ -73,14 +73,20 @@ class JEPADynamics(nn.Module):
         self.encoder = VisionEncoder(
             cfg.image_size, cfg.patch, cfg.dim, cfg.enc_depth, cfg.enc_heads, cfg.mlp_ratio
         )
-        self.action_embed = nn.Embedding(cfg.num_actions, cfg.dim)
+        # Extra index (cfg.num_actions) reserved for unlabelled transitions (action == -1)
+        self.action_embed = nn.Embedding(cfg.num_actions + 1, cfg.dim)
         self.time_embed = nn.Parameter(torch.zeros(1, cfg.max_context, 1, cfg.dim))
         nn.init.trunc_normal_(self.time_embed, std=0.02)
 
-        # Predictor transformer: operates over (tokens_t + action_t)
-        self.pred_blocks = nn.ModuleList(
-            [TransformerBlock(cfg.dim, cfg.pred_heads, cfg.mlp_ratio) for _ in range(cfg.pred_depth)]
-        )
+        # Predictor transformer: STBlock (spatial bidirectional + temporal causal) when keeping patch tokens
+        if cfg.pool_tokens:
+            self.pred_blocks = nn.ModuleList(
+                [TransformerBlock(cfg.dim, cfg.pred_heads, cfg.mlp_ratio) for _ in range(cfg.pred_depth)]
+            )
+        else:
+            self.pred_blocks = nn.ModuleList(
+                [STBlock(cfg.dim, cfg.pred_heads, cfg.mlp_ratio) for _ in range(cfg.pred_depth)]
+            )
         self.pred_norm = nn.LayerNorm(cfg.dim)
         self.pred_head = nn.Linear(cfg.dim, cfg.dim)
         self.apply(_init_weights)
@@ -92,6 +98,35 @@ class JEPADynamics(nn.Module):
             return z.mean(dim=2)  # [B, T, D]
         return z
 
+    def forward(self, z_seq: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        r"""Parallel causal sequence prediction for teacher-forcing training.
+
+        Args:
+            z_seq: [B, T, N, D] (or [B, T, D]) context representations for t=0..T-1
+            actions: [B, T] integer action ids in {0..num_actions-1} (or -1 for unlabelled)
+
+        Returns:
+            pred_seq: [B, T, N, D] (or [B, T, D]) predicted next-step representations \hat{z}_{1..T}
+        """
+        B, T = actions.shape[:2]
+        z_ctx = z_seq[:, :T]
+        safe_actions = torch.where(actions < 0, self.cfg.num_actions, actions)
+        act_tokens = self.action_embed(safe_actions)  # [B, T, D]
+        t_emb = self.time_embed[:, :T]  # [1, T, 1, D]
+
+        if self.cfg.pool_tokens:
+            h = z_ctx + act_tokens + t_emb[:, :, 0, :]
+            for blk in self.pred_blocks:
+                h = blk(h, causal=True)
+            h = self.pred_norm(h)
+            return z_ctx + self.pred_head(h)  # Residual latent transition [B, T, D]
+        else:
+            h = z_ctx + act_tokens[:, :, None, :] + t_emb  # [B, T, N, D]
+            for blk in self.pred_blocks:
+                h = blk(h)  # STBlock: spatial bidirectional within frame t, temporal causal across <= t
+            h = self.pred_norm(h)
+            return z_ctx + self.pred_head(h)  # Residual latent transition [B, T, N, D]
+
     def step_predict(self, z_seq: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         """Predicts the next representation z_{t+1} given history z_{1..t} and actions a_{1..t}.
 
@@ -102,42 +137,7 @@ class JEPADynamics(nn.Module):
         Returns:
             pred_next: [B, N, D] (or [B, D]) predicted representation for step T+1
         """
-        B, T = z_seq.shape[:2]
-        act_tokens = self.action_embed(actions)  # [B, T, D]
-
-        if self.cfg.pool_tokens:
-            # Sequence: [z_1 + a_1, z_2 + a_2, ..., z_T + a_T] -> predict z_{T+1}
-            h = z_seq + act_tokens + self.time_embed[:, :T, 0, :]
-            for blk in self.pred_blocks:
-                h = blk(h, causal=True)
-            h = self.pred_norm(h)
-            return self.pred_head(h[:, -1])  # [B, D]
-        else:
-            # Add action embedding and temporal embedding broadcast across all spatial patch tokens
-            N = z_seq.shape[2]
-            h = z_seq + act_tokens[:, :, None, :] + self.time_embed[:, :T]  # [B, T, N, D]
-            # Flatten to [B, T*N, D] with causal spatial-temporal ordering
-            flat_h = h.reshape(B, T * N, -1)
-            for blk in self.pred_blocks:
-                flat_h = blk(flat_h, causal=True)
-            flat_h = self.pred_norm(flat_h)
-            # Last frame patch tokens
-            pred_tokens = self.pred_head(flat_h.reshape(B, T, N, -1)[:, -1])  # [B, N, D]
-            return pred_tokens
-
-    def forward(self, z_seq: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        r"""Batch sequence prediction for teacher-forcing training.
-
-        z_seq: [B, T, ...] context representations for t=0..T-1
-        actions: [B, T-1] actions taken at t=0..T-2
-        Returns predicted representations \hat{z}_{1..T-1}
-        """
-        B, T = actions.shape[:2]
-        preds = []
-        for t in range(1, T + 1):
-            pred_t = self.step_predict(z_seq[:, :t], actions[:, :t])
-            preds.append(pred_t)
-        return torch.stack(preds, dim=1)  # [B, T, ...]
+        return self.forward(z_seq, actions)[:, -1]
 
     @torch.no_grad()
     def rollout(

@@ -2,6 +2,7 @@ import torch
 
 from latent_play.eval import (
     compute_voe_score,
+    inject_action_contradiction_violation,
     inject_disappearance_violation,
     inject_teleport_violation,
 )
@@ -32,6 +33,10 @@ def test_voe_injections():
     assert disap.shape == frames.shape
     assert not torch.equal(disap[:, 2:], frames[:, 2:])
 
+    contra = inject_action_contradiction_violation(frames)
+    assert contra.shape == frames.shape
+    assert torch.equal(contra[:, :2], frames[:, :2])
+
 
 def test_compute_voe_score():
     torch.manual_seed(0)
@@ -39,8 +44,9 @@ def test_compute_voe_score():
     frames = torch.randn(2, 4, 3, 32, 32)
     actions = torch.randint(0, 5, (2, 3))
 
-    res = compute_voe_score(model, frames, actions, violation_type="teleport")
-    assert "surprise_plausible" in res
-    assert "surprise_violated" in res
-    assert "voe_ratio" in res
-    assert res["voe_ratio"] >= 0.0
+    for vtype in ("teleport", "disappearance", "contradiction"):
+        res = compute_voe_score(model, frames, actions, violation_type=vtype)
+        assert "surprise_plausible" in res
+        assert "surprise_violated" in res
+        assert "voe_ratio" in res
+        assert res["voe_ratio"] >= 0.0
