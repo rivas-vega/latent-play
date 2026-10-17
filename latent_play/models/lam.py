@@ -37,7 +37,8 @@ class LAMConfig:
     num_codes: int = 8
     code_dim: int = 32
     beta: float = 0.25
-    vq_weight: float = 1.0
+    vq_weight: float = 0.05
+    motion_focus: float = 15.0  # upweights pixels that changed between t and t+1
 
     @property
     def num_frames(self) -> int:
@@ -51,6 +52,8 @@ class LatentActionModel(nn.Module):
         T = cfg.num_frames
         self.enc_embed = PatchEmbed(cfg.image_size, cfg.patch, cfg.dim, T)
         self.encoder = STTransformer(cfg.dim, cfg.enc_depth, cfg.heads)
+        self.spatial_attn = nn.Linear(cfg.dim, 1)
+        self.action_ln = nn.LayerNorm(cfg.dim)
         self.to_action = nn.Linear(cfg.dim, cfg.code_dim)
         self.vq = VectorQuantizer(cfg.num_codes, cfg.code_dim, beta=cfg.beta)
 
@@ -61,6 +64,13 @@ class LatentActionModel(nn.Module):
         nn.init.zeros_(self.head.weight)  # start as "copy the last frame"
         nn.init.zeros_(self.head.bias)
 
+    def _pool_transitions(self, h: torch.Tensor) -> torch.Tensor:
+        """Pools temporal feature differences dh = h[:, 1:] - h[:, :-1] across spatial patches via attention."""
+        dh = h[:, 1:] - h[:, :-1]  # [B, T-1, N, D] — cancels static episode background
+        weights = F.softmax(self.spatial_attn(dh), dim=2)  # [B, T-1, N, 1]
+        pooled = (dh * weights).sum(dim=2)  # [B, T-1, D]
+        return self.to_action(self.action_ln(pooled))
+
     # ------------------------------------------------------------ inference
     def encode(self, frames: torch.Tensor) -> torch.Tensor:
         """frames [B, T, 3, H, W] in [-1, 1] -> continuous actions [B, T-1, code_dim]."""
@@ -68,7 +78,7 @@ class LatentActionModel(nn.Module):
         max_f = self.cfg.num_frames
         if T <= max_f:
             h = self.encoder(self.enc_embed(frames))
-            return self.to_action(h[:, 1:].mean(dim=2))
+            return self._pool_transitions(h)
 
         # For longer sequences (e.g. T=8 or 16 in dynamics training), slide a window of length max_f
         pad_len = max_f - 2
@@ -80,7 +90,7 @@ class LatentActionModel(nn.Module):
         windows = torch.stack([padded[:, i : i + max_f] for i in range(T - 1)], dim=1)
         flat_win = windows.reshape(B * (T - 1), max_f, C, H, W)
         h = self.encoder(self.enc_embed(flat_win))  # [B*(T-1), max_f, N, D]
-        out = self.to_action(h[:, -1].mean(dim=1))  # [B*(T-1), code_dim]
+        out = self._pool_transitions(h)[:, -1]  # [B*(T-1), code_dim]
         return out.reshape(B, T - 1, -1)
 
     def infer_actions(self, frames: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -98,12 +108,19 @@ class LatentActionModel(nn.Module):
     # ------------------------------------------------------------- training
     def forward(self, frames: torch.Tensor) -> dict[str, torch.Tensor]:
         vq = self.infer_actions(frames)
-        pred = self.decode(frames[:, :-1], vq["z_q"])
+        past = frames[:, :-1]
         target = frames[:, 1:]
-        recon = F.mse_loss(pred.float(), target.float())
+        pred = self.decode(past, vq["z_q"])
+        # Motion-focused MSE: upweight pixels that actually changed between past and target
+        sq_err = (pred.float() - target.float()).pow(2)
+        if self.cfg.motion_focus > 0.0:
+            motion_weight = 1.0 + self.cfg.motion_focus * (target.float() - past.float()).abs().detach()
+            recon = (sq_err * motion_weight).mean()
+        else:
+            recon = sq_err.mean()
         return {
             "loss": recon + self.cfg.vq_weight * vq["loss"],
-            "recon": recon,
+            "recon": sq_err.mean(),
             "vq_loss": vq["loss"],
             "perplexity": vq["perplexity"],
             "indices": vq["indices"],
