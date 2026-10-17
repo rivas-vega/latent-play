@@ -1,0 +1,15 @@
+env: toy
+out: data/toy
+total_steps: 100000
+seed: 0
+env_kwargs:
+  size: 64
+  grid: 8
+  max_steps: 64
+  distractor: true
+policy:
+  p_explore: 0.2
+  repeat_min: 1
+  repeat_max: 4
+  explore_min: 4
+  explore_max: 12

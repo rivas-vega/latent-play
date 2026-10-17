@@ -1,0 +1,28 @@
+data:
+  root: data/toy
+  val_fraction: 0.05
+model:
+  image_size: 64
+  patch: 8
+  dim: 128
+  enc_depth: 3
+  enc_heads: 4
+  pred_depth: 3
+  pred_heads: 4
+  num_actions: 5
+  max_context: 8
+train:
+  batch_size: 32
+  lr: 3.0e-4
+  steps: 2000
+  warmup: 200
+  log_every: 50
+  eval_every: 500
+  eval_batches: 5
+  num_workers: 2
+  tau_start: 0.99
+  tau_end: 1.0
+  loss_type: l1
+  vicreg_var_weight: 0.0
+  train_decoder: true
+  out_dir: checkpoints/dyn_toy

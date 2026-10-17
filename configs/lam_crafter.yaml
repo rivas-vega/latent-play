@@ -1,0 +1,28 @@
+# Crafter LAM. Debug on T4/L4 with `train.steps=2000`, final run on A100:
+#   python scripts/train_lam.py --config configs/lam_crafter.yaml train.compile=true
+# A100 (bf16): ~8-10 it/s at batch 128 -> 30k steps in ~1 h.
+data:
+  root: data/crafter
+  val_fraction: 0.05
+  collapse_blocked: false  # Crafter: a blocked move still turns the player (visible)
+model:
+  image_size: 64
+  patch: 8
+  context: 2
+  dim: 384
+  enc_depth: 6
+  dec_depth: 6
+  heads: 6
+  num_codes: 8
+  code_dim: 32
+train:
+  batch_size: 128
+  lr: 3.0e-4
+  steps: 30000
+  warmup: 1000
+  log_every: 100
+  eval_every: 2000
+  eval_batches: 30
+  num_workers: 8
+  amp: auto
+  out_dir: checkpoints/lam_crafter

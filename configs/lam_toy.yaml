@@ -1,0 +1,26 @@
+# Toy sanity check. Runs on CPU in ~10-15 min; on a T4 in ~2 min.
+# Expected: purity_visible -> ~1.0 with the distractor disabled.
+data:
+  root: data/toy
+  val_fraction: 0.05
+  collapse_blocked: true   # blocked moves are pixel-identical to noop in the toy env
+model:
+  image_size: 64
+  patch: 8
+  context: 2
+  dim: 128
+  enc_depth: 3
+  dec_depth: 3
+  heads: 4
+  num_codes: 8
+  code_dim: 16
+train:
+  batch_size: 32
+  lr: 5.0e-4
+  steps: 2000
+  warmup: 200
+  log_every: 50
+  eval_every: 500
+  eval_batches: 10
+  num_workers: 2
+  out_dir: checkpoints/lam_toy

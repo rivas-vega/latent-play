@@ -1,0 +1,29 @@
+data:
+  root: data/crafter
+  val_fraction: 0.05
+model:
+  image_size: 64
+  patch: 8
+  dim: 384
+  enc_depth: 6
+  enc_heads: 6
+  pred_depth: 6
+  pred_heads: 6
+  num_actions: 17
+  max_context: 16
+train:
+  batch_size: 64
+  lr: 3.0e-4
+  steps: 30000
+  warmup: 1000
+  log_every: 100
+  eval_every: 2000
+  eval_batches: 20
+  num_workers: 8
+  amp: auto
+  tau_start: 0.996
+  tau_end: 1.0
+  loss_type: l1
+  vicreg_var_weight: 0.01  # anti-collapse regularizer from your monograph
+  train_decoder: true
+  out_dir: checkpoints/dyn_crafter
