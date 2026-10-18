@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="docs/animation.html">
-    <img src="docs/walkthrough_preview.png" width="820" alt="latent-play · visual walkthrough"/>
+    <img src="docs/walkthrough.gif" width="820" alt="latent-play · visual walkthrough"/>
   </a>
 </p>
 
