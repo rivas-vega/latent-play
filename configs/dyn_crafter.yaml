@@ -4,13 +4,15 @@ data:
 model:
   image_size: 64
   patch: 8
-  dim: 384
+  dim: 192
   enc_depth: 6
   enc_heads: 6
   pred_depth: 6
   pred_heads: 6
   num_actions: 17
   max_context: 16
+  pool_tokens: true
+  action_modulation: film
 train:
   batch_size: 64
   lr: 3.0e-4
@@ -26,5 +28,7 @@ train:
   loss_type: l1
   vicreg_var_weight: 0.02
   sigreg_weight: 0.05  # SIGReg (Cramér-Wold + Epps-Pulley) anti-collapse regularizer
+  rollout_steps: 2
+  rollout_weight: 0.5
   train_decoder: true
   out_dir: checkpoints/dyn_crafter

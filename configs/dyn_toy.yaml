@@ -11,6 +11,8 @@ model:
   pred_heads: 4
   num_actions: 5
   max_context: 8
+  pool_tokens: true
+  action_modulation: film
 train:
   batch_size: 32
   lr: 3.0e-4
@@ -25,5 +27,7 @@ train:
   loss_type: l1
   vicreg_var_weight: 0.05
   sigreg_weight: 0.05
+  rollout_steps: 2
+  rollout_weight: 0.5
   train_decoder: true
   out_dir: checkpoints/dyn_toy

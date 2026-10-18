@@ -15,6 +15,7 @@ model:
   heads: 6
   num_codes: 8
   code_dim: 32
+  state_context: true
 train:
   batch_size: 128
   lr: 3.0e-4

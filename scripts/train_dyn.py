@@ -24,6 +24,7 @@ from pathlib import Path
 import imageio.v2 as imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 import yaml
 from torch.utils.data import DataLoader
 
@@ -75,6 +76,8 @@ DEFAULT_TRAIN = {
     "vicreg_var_weight": 0.0,
     "vicreg_cov_weight": 0.0,
     "sigreg_weight": 0.0,
+    "rollout_steps": 0,
+    "rollout_weight": 0.5,
     "train_decoder": True,
     "decoder_lr": 3e-4,
 }
@@ -318,6 +321,16 @@ def main() -> None:
             )
             total_loss = loss_dict["loss"]
 
+            roll_loss = None
+            if tc["rollout_steps"] > 1 and actions.shape[1] >= tc["rollout_steps"]:
+                H_roll = tc["rollout_steps"]
+                roll_pred = model.rollout(online_z[:, 0:1], actions[:, :H_roll])
+                if tc["loss_type"] == "l1":
+                    roll_loss = F.l1_loss(roll_pred, target_z[:, :H_roll])
+                else:
+                    roll_loss = F.mse_loss(roll_pred, target_z[:, :H_roll])
+                total_loss = total_loss + tc["rollout_weight"] * roll_loss
+
             # Train visual decoder with detached representations
             if decoder is not None:
                 dec_pred = decoder(online_z.detach())
@@ -354,6 +367,8 @@ def main() -> None:
                 "lr": lr,
                 "it_s": (step - n_last) / dt,
             }
+            if roll_loss is not None:
+                log_record["roll_loss"] = roll_loss.item()
             if decoder is not None:
                 log_record["dec_loss"] = dec_loss.item()
             logger.log(log_record)
