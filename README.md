@@ -1,25 +1,23 @@
 # `latent-play` — Learning Actionable World Models from Unlabelled Gameplay
 
-[![CI](https://github.com/rivas-vega/latent-play/actions/workflows/ci.yml/badge.svg)](https://github.com/rivas-vega/latent-play/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Interactive Animation](https://img.shields.io/badge/Interactive_Animation-docs%2Fanimation.html-0064E0.svg)](docs/animation.html)
-[![Paper PDF](https://img.shields.io/badge/Paper-report%2Fmain.pdf-b31b1b.svg)](report/main.pdf)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/latent-play/blob/main/notebooks/colab_training_and_demo.ipynb)
+[![CI](https://img.shields.io/github/actions/workflow/status/rivas-vega/latent-play/ci.yml?branch=main&label=CI&style=flat-square&color=black)](https://github.com/rivas-vega/latent-play/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11+-black?style=flat-square)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/pytorch-2.x-black?style=flat-square)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-black?style=flat-square)](LICENSE)
+[![Open In Colab](https://img.shields.io/badge/colab-demo-black?style=flat-square&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/rivas-vega/latent-play/blob/main/notebooks/colab_training_and_demo.ipynb)
 
-> **Research Question:** *Can a Joint-Embedding Predictive Architecture (JEPA) learn a controllable, non-collapsing world model purely from unlabelled gameplay video—and how few real action labels are needed to align its discovered latent actions for closed-loop planning?*
+**Keywords:** `world-models` · `jepa` · `v-jepa` · `latent-actions` · `representation-learning` · `sigreg` · `cross-entropy-method` · `crafter`
 
 <p align="center">
   <a href="docs/animation.html">
-    <img src="docs/walkthrough.gif" width="760" alt="latent-play · visual walkthrough"/>
+    <img src="docs/walkthrough.gif" width="100%" alt="latent-play · visual walkthrough"/>
   </a>
 </p>
 
 <p align="center">
   🎬 <b><a href="docs/animation.html">latent-play · Interactive Visual Walkthrough</a></b>
   <br/>
-  <em>Autonomous step-by-step presentation (pure HTML5 + CSS + vanilla JS + SVG, ~80s) walking through all 4 stages: discovering discrete latent actions from unlabelled video, JEPA dynamics with SIGReg anti-collapse geometry, few-shot button alignment, and closed-loop CEM latent planning in Crafter. Open <a href="docs/animation.html"><code>docs/animation.html</code></a> in any browser.</em>
+  <em>Autonomous step-by-step presentation (pure HTML5 + CSS + vanilla JS + SVG) walking through all 4 stages. Click to open with interactive scrubber & controls (<a href="docs/animation.html"><code>docs/animation.html</code></a>).</em>
 </p>
 
 ---
@@ -32,6 +30,8 @@
 2. **Stage 2 — Isotropic JEPA World Model (`JEPADynamics`, Training, 0% labels):** With `LAM` frozen as a pseudo-labeler, a `ViT-S/8` encoder and causal Spatio-Temporal predictor learn to predict the next frame's latent representation $\hat{z}_{t+1}$ from $(z_t, k_t)$, regularized by **SIGReg** (*Sketched Isotropic Gaussian Regularization*) so representations never collapse.
 3. **Stage 3 — Few-Shot Action Alignment (`ActionAlignment`, Training, 0.1%–10% labels):** With both `LAM` and `JEPA` frozen, a lightweight 2-layer MLP (`~1.6K`–`27K` parameters) learns to translate `(latent code k_t, scene embedding z̄_t) → real environment action a_t` using a small handful of labelled frames.
 4. **Stage 4 — Closed-Loop Latent MPC (`CEMPlanner`, Test-Time Inference, all weights frozen):** At test time, **`LAM` is no longer needed**. Given live frame $x_t$ and goal image $x_{\text{goal}}$, `CEM` searches over sequences of the **8 latent codes** entirely inside `JEPA`'s latent space, picks the best first code $k_0^*$, and passes it to `ActionAlignment` to execute a real game action.
+
+> **Research Question:** *Can a Joint-Embedding Predictive Architecture (JEPA) learn a controllable, non-collapsing world model purely from unlabelled gameplay video—and how few real action labels are needed to align its discovered latent actions for closed-loop planning?*
 
 ---
 
