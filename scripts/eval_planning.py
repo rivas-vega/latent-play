@@ -42,17 +42,33 @@ def run_goal_episode(
     start_pos = info_0["pos"].copy()
     init_state = env.clone_state()
 
-    # Generate reachable goal by taking movement actions from current state
+    # Generate reachable goal by taking non-reversing, unblocked movement actions
     goal_obs = obs_0
     goal_pos = start_pos.copy()
     actions_taken = []
-    for _ in range(target_dist):
-        a = int(np.random.choice(env.movement_actions))
+    prev_a = -1
+    opposites = {1: 2, 2: 1, 3: 4, 4: 3}
+    effective_steps = 0
+    tries = 0
+    max_tries = target_dist * 5
+
+    while effective_steps < target_dist and tries < max_tries:
+        tries += 1
+        valid_candidates = [
+            a for a in env.movement_actions if a != opposites.get(prev_a, -1)
+        ]
+        a = int(np.random.choice(valid_candidates if valid_candidates else env.movement_actions))
+        prev_pos = goal_pos.copy()
         goal_obs, _, _, g_info = env.step(a)
         goal_pos = g_info["pos"].copy()
-        actions_taken.append(a)
+        if not np.array_equal(goal_pos, prev_pos):
+            effective_steps += 1
+            prev_a = a
+            actions_taken.append(a)
+        else:
+            prev_a = -1  # Blocked by obstacle, can try any movement direction next
 
-    # Ensure goal is not identical to start position
+    # If all tries were blocked, ensure goal is at least different from start position
     extra_tries = 0
     while np.array_equal(goal_pos, start_pos) and extra_tries < 10:
         a = int(np.random.choice(env.movement_actions))
