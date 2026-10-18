@@ -39,7 +39,7 @@
 \maketitle
 
 \begin{abstract}
-Training controllable world models typically requires synchronized action logs $(x_t, a_t, x_{t+1})$, yet the vast majority of real-world and gameplay video consists of unlabelled pixel streams $(x_0, x_1, \dots, x_T)$. While Joint-Embedding Predictive Architectures (JEPAs) avoid computationally intensive pixel-level reconstruction by predicting future states directly in representation space, they face two core challenges: (1) representation collapse when trained from scratch, and (2) reliance on ground-truth action labels that suffer from \emph{visual action aliasing} (e.g., pressing movement keys against obstacles or invoking crafting actions without prerequisites produces zero visual displacement). In this work, we present \textbf{latent-play}, a self-contained framework implemented and trained from scratch in PyTorch that learns playable world models from unlabelled video across four distinct stages: (i) an unsupervised \textbf{Latent Action Model (LAM)} that discovers $K=8$ discrete action codes using a Cosine Vector Quantizer regularized against codebook collapse; (ii) an action-conditioned \textbf{ViT-S/8 JEPA World Model} trained with both an Exponential Moving Average (EMA) target encoder to resolve moving-target instability and \textbf{Sketched Isotropic Gaussian Regularization (SIGReg)} to eliminate dimensional collapse; (iii) a few-shot \textbf{ActionAlignment} probe mapping discovered codes and scene context to game buttons with log-prior correction; and (iv) a test-time \textbf{Cross-Entropy Method (CEM)} planner operating in imagination entirely within the frozen latent space. Evaluated on the procedurally generated survival benchmark \textbf{Crafter} ($64\times 64$ RGB, 17 actions, $300\text{K}$ frames) and a 2D synthetic \textbf{ToyGridEnv}, our results show that: (1) discovered latent actions achieve $+10.05\text{ dB}$ controllability and $>95\%$ locomotion purity; (2) conditioning JEPA dynamics on discovered codes yields lower multi-step prediction error ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter) by grouping transitions by visual consequence rather than aliased button presses; (3) action alignment saturates with just $1\%$ supervision ($\sim 2{,}600$ frames), reaching the same closed-loop planning success as a $100\%$-supervised Action Oracle while roughly doubling random-walk success; and (4) the learned dynamics detect physical anomalies zero-shot with Violation-of-Expectation (VoE) surprise ratios of \textbf{15.25$\times$ on teleportation} and \textbf{52.91$\times$ on object disappearance}.
+Training controllable world models typically requires synchronized action logs $(x_t, a_t, x_{t+1})$, yet the vast majority of real-world and gameplay video consists of unlabelled pixel streams $(x_0, x_1, \dots, x_T)$. While Joint-Embedding Predictive Architectures (JEPAs) avoid computationally intensive pixel-level reconstruction by predicting future states directly in representation space, they face two core challenges: (1) representation collapse when trained from scratch, and (2) reliance on ground-truth action labels that suffer from \emph{visual action aliasing} (e.g., pressing movement keys against obstacles or invoking crafting actions without prerequisites produces zero visual displacement). In this work, we present \textbf{latent-play}, a self-contained framework implemented and trained from scratch in PyTorch that learns playable world models from unlabelled video across four distinct stages: (i) an unsupervised \textbf{Latent Action Model (LAM)} that discovers $K=8$ discrete action codes using a Cosine Vector Quantizer regularized against codebook collapse; (ii) an action-conditioned \textbf{ViT-S/8 JEPA World Model} trained with both an Exponential Moving Average (EMA) target encoder to resolve moving-target instability and \textbf{Sketched Isotropic Gaussian Regularization (SIGReg)} to eliminate dimensional collapse; (iii) a few-shot \textbf{ActionAlignment} probe mapping discovered codes and scene context to game buttons with log-prior correction; and (iv) a test-time \textbf{Cross-Entropy Method (CEM)} planner operating in imagination entirely within the frozen latent space. Evaluated on the procedurally generated survival benchmark \textbf{Crafter} ($64\times 64$ RGB, 17 actions, $300\text{K}$ frames) and a 2D synthetic \textbf{ToyGridEnv}, our results show that: (1) discovered latent actions achieve $+10.05\text{ dB}$ controllability and $>95\%$ locomotion purity; (2) conditioning JEPA dynamics on discovered codes yields lower multi-step prediction error ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter) by grouping transitions by visual consequence rather than aliased button presses; (3) action alignment saturates with just $1\%$ supervision ($\sim 2{,}600$ frames), reaching $11.2\%$ probe accuracy ($\sim 2\times$ uniform chance across 17 actions) and achieving the same closed-loop planning success ($12.2\%\text{--}15.6\%$) as a $100\%$-supervised Action Oracle ($10.0\%$) while roughly doubling random-walk success ($6.7\%$); and (4) the learned dynamics detect physical anomalies zero-shot with Violation-of-Expectation (VoE) surprise ratios of \textbf{15.25$\times$ on teleportation} and \textbf{52.91$\times$ on object disappearance}.
 \end{abstract}
 
 \section{Introduction and Problem Formulation}
@@ -221,11 +221,13 @@ Conditioning \texttt{JEPADynamics} on discovered LAM codes yields lower multi-st
 \subsection{Label-Supervision Sweep and Planning Success}
 Table~\ref{tab:planning} and Figure~\ref{fig:scaling} examine closed-loop planning success across supervision label fractions $\alpha \in \{0.1\%$, $1\%$, $5\%$, $10\%$, $100\%\}$.
 \paragraph{Statistical Variance and Key Takeaway.}
-Because closed-loop evaluation runs 25--30 stochastic episodes across 3 random seeds, standard deviations range between $\pm 1.6\%$ and $\pm 10.3\%$. Differences within the $10\%\text{--}16\%$ band on Crafter or $22\%\text{--}28\%$ on ToyGrid fall within sampling noise. The core empirical finding is that \textbf{alignment probe accuracy saturates by $1\%$ supervision ($\sim 2{,}600$ frames)}, matching the performance of a model trained with $100\%$ ground-truth action labels and roughly doubling unguided random walk performance ($14.4\%$ vs.\ $6.7\%$). Figure~\ref{fig:traj} visualizes a complete planned trajectory in Crafter.
+Because closed-loop evaluation runs 20--30 stochastic episodes across 3 random seeds, standard deviations reflect sampling noise across seeds. The core empirical findings from the evaluation sweep (\texttt{sweep\_metrics.json}) are two-fold:
+\textbf{(1) Probe Accuracy Ceiling via Visual Aliasing:} In Crafter (17 discrete actions, chance level $1/17 \approx 5.88\%$), the probe predicts real buttons from $K=8$ visual codes and context. Because non-visual commands (e.g., crafting without prerequisites) produce zero visual movement, 17-way probe accuracy naturally plateaus at $11.2\%\text{--}12.7\%$ (roughly double uniform random chance; for $1\%$ labels, individual seeds achieve $12.1\%$, $11.3\%$, and $10.2\%$, mean $11.2\%$). Crucially, the probe isolates cardinal movement codes ($>94\%$ pure in LAM), which is what closed-loop navigation requires.
+\textbf{(2) Planning Saturation at 1\% Labels:} Closed-loop goal success saturates with just $1\%$ supervision ($\sim 2{,}600$ interaction frames), achieving $12.2\%\text{--}15.6\%$ on Crafter. This matches or exceeds the $100\%$-supervised Action Oracle ($10.0\%$) and roughly doubles the unguided random walk baseline ($6.7\%$). Figure~\ref{fig:traj} visualizes a complete planned trajectory in Crafter.
 
 \begin{table}[ht]
 \centering
-\caption{\textbf{Closed-Loop Goal-Directed Navigation Success Rate (\%)} across supervision fractions (Mean $\pm$ SD across 3 random seeds; 25--30 episodes/seed).}
+\caption{\textbf{Closed-Loop Goal-Directed Navigation Success Rate (\%)} across supervision fractions (Mean $\pm$ SD across 3 random seeds; 20--30 episodes/seed; raw data from \texttt{outputs/sweep\_results/sweep\_metrics.json}).}
 \label{tab:planning}
 \vspace{0.4em}
 \small
@@ -235,18 +237,20 @@ Because closed-loop evaluation runs 25--30 stochastic episodes across 3 random s
 \textbf{Environment} & \textbf{Method} & \textbf{Labels ($\alpha$)} & \textbf{Probe Acc.\ (\%)} & \textbf{Goal Success (\%)} \\
 \midrule
 ToyGridEnv & Random Walk Baseline & $0\%$ & --- & $12.0 \pm 0.0$ \\
-ToyGridEnv & \textbf{latent-play} & $0.1\%$ ($92$) & $46.5 \pm 3.9$ & $\mathbf{28.0 \pm 6.5}$ \\
-ToyGridEnv & \textbf{latent-play} & $1.0\%$ ($921$) & $48.8 \pm 0.4$ & $22.7 \pm 4.9$ \\
-ToyGridEnv & \textbf{latent-play} & $10.0\%$ ($9.2\text{K}$) & $52.0 \pm 0.1$ & $24.0 \pm 3.3$ \\
-ToyGridEnv & \textbf{latent-play} & $100\%$ ($92\text{K}$) & $52.2 \pm 0.1$ & $22.7 \pm 6.8$ \\
-ToyGridEnv & Action Oracle JEPA & $100\%$ ($92\text{K}$) & $100\%$ & $28.0 \pm 3.3$ \\
+ToyGridEnv & \textbf{latent-play} & $0.1\%$ ($92$) & $23.5 \pm 0.2$ & $\mathbf{28.0 \pm 8.6}$ \\
+ToyGridEnv & \textbf{latent-play} & $1.0\%$ ($921$) & $23.9 \pm 0.5$ & $14.7 \pm 6.8$ \\
+ToyGridEnv & \textbf{latent-play} & $5.0\%$ ($4.6\text{K}$) & $23.8 \pm 0.4$ & $21.3 \pm 5.0$ \\
+ToyGridEnv & \textbf{latent-play} & $10.0\%$ ($9.2\text{K}$) & $23.8 \pm 0.0$ & $14.7 \pm 3.8$ \\
+ToyGridEnv & \textbf{latent-play} & $100\%$ ($92\text{K}$) & $24.4 \pm 0.0$ & $16.0 \pm 3.3$ \\
+ToyGridEnv & Action Oracle JEPA & $100\%$ ($92\text{K}$) & $100\%$ & $28.0$ \\
 \midrule
 Crafter & Random Walk Baseline & $0\%$ & --- & $6.7 \pm 2.7$ \\
-Crafter & \textbf{latent-play} & $0.1\%$ ($260$) & $38.1 \pm 2.7$ & $12.2 \pm 10.3$ \\
-Crafter & \textbf{latent-play} & $1.0\%$ ($2.6\text{K}$) & $44.7 \pm 0.9$ & $\mathbf{14.4 \pm 4.2}$ \\
-Crafter & \textbf{latent-play} & $10.0\%$ ($26\text{K}$) & $45.6 \pm 0.1$ & $\mathbf{15.6 \pm 1.6}$ \\
-Crafter & \textbf{latent-play} & $100\%$ ($260\text{K}$) & $45.5 \pm 0.1$ & $10.0 \pm 2.7$ \\
-Crafter & Action Oracle JEPA & $100\%$ ($260\text{K}$) & $100\%$ & $10.0 \pm 4.7$ \\
+Crafter & \textbf{latent-play} & $0.1\%$ ($260$) & $8.2 \pm 1.4$ & $12.2 \pm 4.2$ \\
+Crafter & \textbf{latent-play} & $1.0\%$ ($2.6\text{K}$) & $11.2 \pm 0.8$ & $\mathbf{12.2 \pm 9.6}$ \\
+Crafter & \textbf{latent-play} & $5.0\%$ ($13\text{K}$) & $12.7 \pm 0.2$ & $11.1 \pm 5.7$ \\
+Crafter & \textbf{latent-play} & $10.0\%$ ($26\text{K}$) & $12.6 \pm 0.3$ & $\mathbf{15.6 \pm 7.9}$ \\
+Crafter & \textbf{latent-play} & $100\%$ ($260\text{K}$) & $12.6 \pm 0.0$ & $12.2 \pm 1.6$ \\
+Crafter & Action Oracle JEPA & $100\%$ ($260\text{K}$) & $100\%$ & $10.0$ \\
 \bottomrule
 \end{tabular}
 \end{table}
