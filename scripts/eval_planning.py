@@ -108,7 +108,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--checkpoint", required=True)
-    ap.add_argument("--alignment-checkpoint", default=None)
+    ap.add_argument("--alignment-checkpoint", "--align-ckpt", dest="alignment_checkpoint", default=None)
     ap.add_argument("--num-episodes", type=int, default=10)
     ap.add_argument("--target-dist", type=int, default=6)
     ap.add_argument("--max-steps", type=int, default=16)
@@ -136,8 +136,12 @@ def main() -> None:
         alignment = ActionAlignment(
             num_codes=align_ckpt["num_codes"],
             num_actions=align_ckpt["num_actions"],
+            use_state_context=align_ckpt.get("use_state_context", False),
+            embed_dim=align_ckpt.get("embed_dim", 192),
         ).to(device)
         alignment.load_state_dict(align_ckpt["alignment"])
+        if "action_prior" in align_ckpt:
+            alignment.action_prior.copy_(align_ckpt["action_prior"].to(device))
         alignment.eval()
 
     planner = CEMPlanner(
@@ -156,6 +160,7 @@ def main() -> None:
 
     successes = []
     step_counts = []
+    saved_gif = False
 
     for ep in range(args.num_episodes):
         res = run_goal_episode(
@@ -166,18 +171,16 @@ def main() -> None:
             step_counts.append(res["steps"])
         print(f"Episode {ep+1}/{args.num_episodes}: success={res['success']}, steps={res['steps']}")
 
-        # Save GIF of first episode
-        if ep == 0:
-            # Render video with goal banner side-by-side
+        # Save GIF of first successful episode (or last episode if none succeeded)
+        if (res["success"] and not saved_gif) or (ep == args.num_episodes - 1 and not saved_gif):
             goal_frame = res["goal_frame"]
             combined_frames = []
             for f in res["frames"]:
-                # Stack current frame and goal frame side-by-side
                 row = np.concatenate([f, goal_frame], axis=1)
-                # Scale up for clean viewing
                 row = row.repeat(3, axis=0).repeat(3, axis=1)
                 combined_frames.append(row)
             imageio.mimsave(out / "planned_trajectory.gif", combined_frames, duration=0.25)
+            saved_gif = True
             print(f"saved trajectory animation to {out / 'planned_trajectory.gif'}")
 
     sr = np.mean(successes)
