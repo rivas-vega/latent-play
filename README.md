@@ -16,7 +16,7 @@
 
 <p align="center">
   <br/>
-  <em>Autonomous step-by-step presentation (pure HTML5 + CSS + vanilla JS + SVG) walking through all 4 stages. Click to open with interactive scrubber & controls (<a href="docs/animation.html"><code>docs/animation.html</code></a>).</em>
+  <em>Step-by-step presentation walking through all 4 stages. Click to open with interactive scrubber & controls (<a href="docs/animation.html"><code>docs/animation.html</code></a>).</em>
 </p>
 
 ---
