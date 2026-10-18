@@ -47,8 +47,25 @@ def inject_action_contradiction_violation(frames: torch.Tensor) -> torch.Tensor:
     """Simulates an action-contradicting transition by reversing temporal motion in the second half."""
     violated = frames.clone()
     T = frames.shape[1]
+    if T <= 2:
+        return violated
     mid = T // 2
-    violated[:, mid:] = torch.flip(violated[:, : T - mid], dims=[1])
+    # Reverse motion starting from frame mid - 2 so the transition at mid - 1 -> mid
+    # is a true motion reversal (f_{mid-1} -> f_{mid-2}) rather than a duplicate frame.
+    rev_indices = []
+    idx = mid - 2
+    step = -1
+    for _ in range(T - mid):
+        rev_indices.append(idx)
+        idx += step
+        if idx < 0:
+            idx = 1 if mid > 2 else 0
+            step = 1
+        elif idx >= mid:
+            idx = mid - 2
+            step = -1
+    idx_tensor = torch.tensor(rev_indices, device=frames.device, dtype=torch.long)
+    violated[:, mid:] = frames[:, idx_tensor]
     return violated
 
 

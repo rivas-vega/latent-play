@@ -36,6 +36,9 @@ def test_voe_injections():
     contra = inject_action_contradiction_violation(frames)
     assert contra.shape == frames.shape
     assert torch.equal(contra[:, :2], frames[:, :2])
+    # Verify that the transition at onset (index 2) reverses motion (is frames[:, 0]) and is not a duplicate of frames[:, 1]
+    assert not torch.equal(contra[:, 2], contra[:, 1])
+    assert torch.equal(contra[:, 2], frames[:, 0])
 
 
 def test_compute_voe_score():
