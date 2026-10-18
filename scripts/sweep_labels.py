@@ -30,6 +30,107 @@ from latent_play.utils import get_device, load_checkpoint, seed_everything
 from scripts.eval_planning import run_goal_episode
 
 
+@torch.no_grad()
+def precompute_dataset_features(
+    lam: LatentActionModel,
+    loader: DataLoader,
+    device: torch.device,
+    dyn_model: JEPADynamics | None = None,
+    use_state_context: bool = False,
+    only_valid_labels: bool = False,
+) -> dict[str, torch.Tensor]:
+    """Precomputes and caches discrete LAM codes, actions, and visual embeddings once."""
+    lam.eval()
+    if dyn_model is not None:
+        dyn_model.eval()
+    use_ctx = use_state_context and dyn_model is not None
+
+    all_codes = []
+    all_actions = []
+    all_z = []
+
+    for batch in loader:
+        target_actions = batch["action"] if "action" in batch else batch["action_true"]
+        if only_valid_labels:
+            valid = target_actions >= 0
+            if not valid.any():
+                continue
+        else:
+            valid = None
+
+        frames = batch["frames"].float().div_(127.5).sub_(1.0).to(device)
+        codes = lam.infer_actions(frames)["indices"].cpu()
+        actions = target_actions.cpu()
+
+        if use_ctx:
+            z = dyn_model.encode(frames[:, :-1]).cpu()
+            B, T_m1 = codes.shape
+            z_flat = z.reshape(B * T_m1, *z.shape[2:])
+
+        if valid is not None:
+            v_flat = valid.cpu().flatten()
+            all_codes.append(codes.flatten()[v_flat])
+            all_actions.append(actions.flatten()[v_flat])
+            if use_ctx:
+                all_z.append(z_flat[v_flat])
+        else:
+            all_codes.append(codes.flatten())
+            all_actions.append(actions.flatten())
+            if use_ctx:
+                all_z.append(z_flat)
+
+    res = {
+        "codes": torch.cat(all_codes, dim=0) if all_codes else torch.zeros(0, dtype=torch.long),
+        "actions": torch.cat(all_actions, dim=0) if all_actions else torch.zeros(0, dtype=torch.long),
+    }
+    if use_ctx and all_z:
+        res["z"] = torch.cat(all_z, dim=0)
+    return res
+
+
+def fit_alignment_probe(
+    codes: torch.Tensor,
+    actions: torch.Tensor,
+    z: torch.Tensor | None,
+    num_codes: int,
+    num_actions: int,
+    dim: int,
+    device: torch.device,
+    epochs: int = 8,
+    lr: float = 1e-2,
+    use_state_context: bool = False,
+) -> ActionAlignment:
+    """Trains the action alignment classifier on pre-cached tensors."""
+    align = ActionAlignment(
+        num_codes=num_codes,
+        num_actions=num_actions,
+        dim=dim,
+        use_state_context=use_state_context,
+    ).to(device)
+    if len(actions) == 0:
+        return align
+
+    opt = torch.optim.Adam(align.parameters(), lr=lr)
+    codes = codes.to(device)
+    actions = actions.to(device)
+    z = z.to(device) if z is not None else None
+
+    counts = torch.bincount(actions, minlength=num_actions).float()
+    prior = (counts + 1.0) / (counts.sum() + num_actions)
+    align.action_prior.copy_(prior)
+    class_weights = (1.0 / torch.sqrt(counts.clamp_min(1.0))).to(device)
+    class_weights = class_weights / class_weights.mean()
+
+    for _ in range(epochs * 10):
+        logits = align(codes, z=z)
+        loss = align.loss(logits, actions, codes=codes, class_weights=class_weights)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+
+    return align.eval()
+
+
 def train_alignment_probe(
     lam: LatentActionModel,
     loader: DataLoader,
@@ -49,50 +150,21 @@ def train_alignment_probe(
     dim = dyn_model.cfg.dim if dyn_model is not None else 128
     use_ctx = use_state_context and dyn_model is not None
 
-    align = ActionAlignment(num_codes=K, num_actions=A, dim=dim, use_state_context=use_ctx).to(device)
-    opt = torch.optim.Adam(align.parameters(), lr=lr)
-
-    # First pass: collect labelled (codes, target_actions, optional z)
-    cached_codes = []
-    cached_actions = []
-    cached_z = []
-    with torch.no_grad():
-        for batch in loader:
-            target_actions = batch["action"]
-            valid = target_actions >= 0
-            if not valid.any():
-                continue
-            frames = batch["frames"].float().div_(127.5).sub_(1.0).to(device)
-            codes = lam.infer_actions(frames)["indices"].cpu()
-            cached_codes.append(codes[valid])
-            cached_actions.append(target_actions[valid])
-            if use_ctx:
-                # State context from initial transition frames [B, T-1, 3, H, W] -> [B, T-1, N, D]
-                z = dyn_model.encode(frames[:, :-1]).cpu()
-                cached_z.append(z[valid])
-
-    if not cached_actions:
-        return align
-
-    all_codes = torch.cat(cached_codes, dim=0).to(device)
-    all_actions = torch.cat(cached_actions, dim=0).to(device)
-    all_z = torch.cat(cached_z, dim=0).to(device) if use_ctx else None
-
-    counts = torch.bincount(all_actions, minlength=A).float()
-    prior = (counts + 1.0) / (counts.sum() + A)
-    align.action_prior.copy_(prior)
-    # Inverse square-root class weighting prevents frequent actions (e.g. noop) from dominating
-    class_weights = (1.0 / torch.sqrt(counts.clamp_min(1.0))).to(device)
-    class_weights = class_weights / class_weights.mean()
-
-    for _ in range(epochs * 10):
-        logits = align(all_codes, z=all_z)
-        loss = align.loss(logits, all_actions, codes=all_codes, class_weights=class_weights)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-
-    return align.eval()
+    cached = precompute_dataset_features(
+        lam, loader, device, dyn_model=dyn_model, use_state_context=use_ctx, only_valid_labels=True
+    )
+    return fit_alignment_probe(
+        cached["codes"],
+        cached["actions"],
+        cached.get("z", None),
+        num_codes=K,
+        num_actions=A,
+        dim=dim,
+        device=device,
+        epochs=epochs,
+        lr=lr,
+        use_state_context=use_ctx,
+    )
 
 
 def main() -> None:
@@ -158,32 +230,69 @@ def main() -> None:
 
         val_ds = VideoWindows(args.data_root, num_frames=lam_cfg.num_frames, split="val", return_true_actions=True)
         val_loader = DataLoader(val_ds, batch_size=64, shuffle=False)
+        print("Pre-caching validation representations...")
+        val_cached = precompute_dataset_features(
+            lam, val_loader, device, dyn_model=dyn_model, use_state_context=args.use_state_context
+        )
+        val_codes_all = val_cached["codes"].to(device)
+        val_actions_all = val_cached["actions"].to(device)
+        val_z_all = val_cached["z"].to(device) if "z" in val_cached else None
+
+        full_train_ds = VideoWindows(
+            args.data_root,
+            num_frames=lam_cfg.num_frames,
+            split="train",
+            label_fraction=1.0,
+            return_true_actions=True,
+        )
+        full_train_loader = DataLoader(full_train_ds, batch_size=64, shuffle=False)
+        print("Pre-caching full training representations...")
+        train_cached = precompute_dataset_features(
+            lam,
+            full_train_loader,
+            device,
+            dyn_model=dyn_model,
+            use_state_context=args.use_state_context,
+        )
+        train_codes_all = train_cached["codes"]
+        train_actions_all = train_cached["actions"]
+        train_z_all = train_cached.get("z", None)
+        N_train = len(train_actions_all)
+        align_dim = dyn_model.cfg.dim if dyn_model is not None else 128
+        use_ctx = args.use_state_context and dyn_model is not None
 
         for frac in args.fractions:
             frac_srs = []
             for seed in args.seeds:
                 seed_everything(seed)
-                train_ds = VideoWindows(
-                    args.data_root,
-                    num_frames=lam_cfg.num_frames,
-                    split="train",
-                    label_fraction=frac,
-                    label_seed=seed,
-                )
-                train_loader = DataLoader(train_ds, batch_size=64, shuffle=False)
+                if frac >= 1.0:
+                    sub_codes = train_codes_all
+                    sub_actions = train_actions_all
+                    sub_z = train_z_all
+                else:
+                    rng = np.random.default_rng(seed)
+                    mask = rng.random(N_train) < frac
+                    if not mask.any():
+                        mask[rng.integers(0, N_train)] = True
+                    sub_codes = train_codes_all[mask]
+                    sub_actions = train_actions_all[mask]
+                    sub_z = train_z_all[mask] if train_z_all is not None else None
 
-                align = train_alignment_probe(
-                    lam,
-                    train_loader,
-                    device,
-                    dyn_model=dyn_model,
-                    use_state_context=args.use_state_context,
+                align = fit_alignment_probe(
+                    sub_codes,
+                    sub_actions,
+                    sub_z,
+                    num_codes=lam_cfg.num_codes,
+                    num_actions=val_ds.num_actions,
+                    dim=align_dim,
+                    device=device,
+                    use_state_context=use_ctx,
                 )
                 torch.save(
                     {
                         "alignment": align.state_dict(),
                         "num_codes": lam_cfg.num_codes,
-                        "num_actions": train_ds.num_actions,
+                        "num_actions": val_ds.num_actions,
                         "fraction": frac,
                         "seed": seed,
                         "use_state_context": align.use_state_context,
@@ -194,23 +303,10 @@ def main() -> None:
                     out / f"alignment_f{frac}_s{seed}.pt",
                 )
 
-                # Evaluate accuracy on validation ground-truth actions
-                correct, total = 0, 0
-                for v_batch in val_loader:
-                    v_frames = v_batch["frames"].float().div_(127.5).sub_(1.0).to(device)
-                    v_true = v_batch["action_true"].to(device)
-                    with torch.no_grad():
-                        codes = lam.infer_actions(v_frames)["indices"]
-                        z_val = (
-                            dyn_model.encode(v_frames[:, :-1])
-                            if (dyn_model is not None and align.use_state_context)
-                            else None
-                        )
-                        preds = align.predict_action(codes, z=z_val, prior_correction=0.5)
-                    correct += (preds == v_true).sum().item()
-                    total += v_true.numel()
-
-                acc = correct / max(1, total)
+                # Evaluate accuracy on validation ground-truth actions in one shot
+                with torch.no_grad():
+                    preds = align.predict_action(val_codes_all, z=val_z_all, prior_correction=0.5)
+                acc = (preds == val_actions_all).float().mean().item()
                 results["alignment_accuracy"][str(frac)].append(acc)
 
                 if dyn_model is not None:
