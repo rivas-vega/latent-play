@@ -4,7 +4,7 @@ Connects directly to the mathematical foundations of representation collapse
 and non-contrastive self-supervised learning:
 - Pure EMA (target network stop-gradient, Grill et al. 2020 / Assran et al. 2023)
 - VICReg variance & covariance regularization (Bardes et al. 2022)
-- Statistical Invariant Geometric Regularizer (SIGReg) via Cramér-Wold & Epps-Pulley test (Balestriero, LeCun et al. 2025/2026)
+- Sketched Isotropic Gaussian Regularization (SIGReg) via Cramér-Wold & Epps-Pulley test (Balestriero & LeCun, LeJEPA 2025)
 - Effective rank diagnostic (Roy & Vetterli 2007) to quantify representation collapse
 """
 
@@ -67,7 +67,7 @@ def vicreg_covariance_loss(z: torch.Tensor) -> torch.Tensor:
 
 
 def sigreg_loss(z: torch.Tensor, num_slices: int = 64, max_samples: int = 512) -> torch.Tensor:
-    r"""Statistical Invariant Geometric Regularizer (SIGReg).
+    r"""Sketched Isotropic Gaussian Regularization (SIGReg).
 
     Based on the Cramér-Wold theorem and the differentiable Epps-Pulley test statistic (1983):
         T_{EP}(h) = 1 + \frac{\sqrt{2}}{n^2} \sum_{j,k} e^{-(h_j - h_k)^2 / 4} - \frac{4}{\sqrt{3} n} \sum_j e^{-h_j^2 / 6}
