@@ -22,6 +22,7 @@ uv run python scripts/sweep_labels.py \
     --oracle-ckpt checkpoints/dyn_crafter_oracle/dyn_final.pt \
     --fractions 0.001 0.01 0.05 0.1 1.0 \
     --num-episodes 30 \
+    --use-state-context \
     --out-dir outputs/sweep_results
 
 uv run python scripts/eval_voe.py \
