@@ -25,7 +25,7 @@ train:
   tau_start: 0.99
   tau_end: 1.0
   loss_type: l1
-  vicreg_var_weight: 0.05
+  vicreg_var_weight: 0.0
   sigreg_weight: 0.05
   rollout_steps: 2
   rollout_weight: 0.5
