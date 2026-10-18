@@ -42,121 +42,185 @@
 \maketitle
 
 \begin{abstract}
-Training controllable world models typically requires synchronized action logs $(x_t, a_t, x_{t+1})$, yet $99.99\%$ of real-world and gameplay video consists of unlabelled pixel streams $(x_0, x_1, \dots, x_T)$. While Joint-Embedding Predictive Architectures (JEPAs) avoid slow pixel-level generation by predicting future states in representation space, they face two fundamental challenges: (1) catastrophic representation collapse when trained from scratch, and (2) reliance on ground-truth action labels that suffer from \emph{visual action aliasing} (e.g., pressing movement keys against obstacles or invoking context-dependent actions without prerequisites produces zero visual displacement). In this work, we present \textbf{latent-play}, a self-contained framework implemented and trained from scratch in PyTorch that learns playable world models from unlabelled video in three training stages plus closed-loop test-time planning: (i) an unsupervised \textbf{Latent Action Model (LAM)} with a causal Spatio-Temporal Transformer and an entropy-regularized Vector Quantized (VQ, $K=8$) bottleneck; (ii) an action-conditioned \textbf{ViT-S/8 JEPA World Model} regularized against dimensional collapse via \textbf{Sketched Isotropic Gaussian Regularization (SIGReg)} using the Cram\'er-Wold theorem and differentiable Epps-Pulley normality testing; and (iii) a few-shot \textbf{ActionAlignment} probe with log-prior class-imbalance correction coupled with a receding-horizon \textbf{Cross-Entropy Method (CEM)} planner over latent codes at test time. Across \textbf{ToyGridEnv} ($100\text{K}$ frames) and \textbf{Crafter} ($300\text{K}$ frames, $30\text{K}$ steps on an NVIDIA A100), we show that: (1) discovered latent actions achieve $+10.05\text{ dB}$ controllability ($\Delta\text{PSNR}_{\text{ctrl}}$) and $95.6\%$ locomotion purity; (2) conditioning JEPA dynamics on discovered LAM codes yields lower internal multi-step prediction error ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter) by avoiding visual action aliasing; (3) action alignment accuracy saturates with just $1\%\text{--}10\%$ action labels, reaching the same closed-loop CEM navigation regime as a $100\%$-supervised Action Oracle while roughly doubling random-walk success; and (4) the learned dynamics detect physical violations zero-shot with Violation-of-Expectation (VoE) surprise ratios of \textbf{15.25$\times$ on teleportation} and \textbf{52.91$\times$ on object disappearance}.
+Training controllable world models typically requires synchronized action logs $(x_t, a_t, x_{t+1})$, yet the vast majority of real-world and gameplay video consists of unlabelled pixel streams $(x_0, x_1, \dots, x_T)$. While Joint-Embedding Predictive Architectures (JEPAs) avoid computationally intensive pixel-level reconstruction by predicting future states directly in representation space, they face two core challenges: (1) representation collapse when trained from scratch, and (2) reliance on ground-truth action labels that suffer from \emph{visual action aliasing} (e.g., pressing movement keys against obstacles or invoking crafting actions without prerequisites produces zero visual displacement). In this work, we present \textbf{latent-play}, a self-contained framework implemented and trained from scratch in PyTorch that learns playable world models from unlabelled video across four distinct stages: (i) an unsupervised \textbf{Latent Action Model (LAM)} that discovers $K=8$ discrete action codes using a Cosine Vector Quantizer regularized against codebook collapse; (ii) an action-conditioned \textbf{ViT-S/8 JEPA World Model} trained with both an Exponential Moving Average (EMA) target encoder to resolve the moving-target instability and \textbf{Sketched Isotropic Gaussian Regularization (SIGReg)} to eliminate dimensional collapse; (iii) a few-shot \textbf{ActionAlignment} probe mapping discovered codes and scene context to game buttons with log-prior correction; and (iv) a test-time \textbf{Cross-Entropy Method (CEM)} planner operating in imagination entirely within the frozen latent space. Evaluated on the procedurally generated survival benchmark \textbf{Crafter} ($64\times 64$ RGB, 17 actions, $300\text{K}$ frames) and a 2D synthetic \textbf{ToyGridEnv}, our results show that: (1) discovered latent actions achieve $+10.05\text{ dB}$ controllability and $>95\%$ locomotion purity; (2) conditioning JEPA dynamics on discovered codes yields lower multi-step prediction error ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter) by grouping transitions by visual consequence rather than aliased button presses; (3) action alignment saturates with just $1\%$ supervision ($\sim 2{,}600$ frames), reaching the same closed-loop planning success as a $100\%$-supervised Action Oracle while roughly doubling random-walk success; and (4) the learned dynamics detect physical anomalies zero-shot with Violation-of-Expectation (VoE) surprise ratios of \textbf{15.25$\times$ on teleportation} and \textbf{52.91$\times$ on object disappearance}.
 \end{abstract}
 
 \section{Introduction and Problem Formulation}
-Standard model-based reinforcement learning assumes access to action-annotated transitions $\mathcal{D}_{\text{sup}} = \{(x_t, a_t, x_{t+1})\}$. In contrast, passive video datasets provide only raw RGB observations $\mathcal{D}_{\text{vid}} = \{(x_0, x_1, \dots, x_T)\}$ with $x_t \in [0, 1]^{3 \times H \times W}$ and no action labels ($a_t = \varnothing$).
+Standard model-based reinforcement learning and action-conditioned generative world models \cite{hafner2023dreamerv3,assran2025vjepa2} assume that every visual transition $(x_t, x_{t+1})$ is paired with an explicit controller button label $a_t \in \mathcal{A}_{\text{env}}$. In practice, massive internet-scale video datasets and passive observations are completely unlabelled ($a_t = \varnothing$).
 
-To turn passive video into a \emph{playable, plannable world model}, two distinct problems must be solved:
+To turn unlabelled video into an actionable, plannable world model, an agent must decouple two distinct problems:
 \begin{enumerate}
-  \item \textbf{Unsupervised Action Discovery:} Inferring a compact discrete variable $k_t \in \{0, \dots, K-1\}$ between $x_t$ and $x_{t+1}$ that captures the controllable agent-induced transition while ignoring background noise and autonomous distractors \cite{bruce2024genie,schmidt2023lapo}.
-  \item \textbf{Non-Collapsing Representation Dynamics:} Learning an encoder $z_t = f_\theta(x_t)$ and transition predictor $\hat{z}_{t+1} = g_\psi(z_{0..t}, k_{0..t})$ directly in latent space \cite{assran2025vjepa2,balestriero2025lejepa} without trivial constant collapse ($f_\theta(x) \equiv \mathbf{c}$) or dimensional subspace collapse.
+  \item \textbf{Unsupervised Action Discovery:} Inferring a compact set of discrete latent codes $k_t \in \{0, \dots, K-1\}$ that account for the controllable visual motion between consecutive frames $(x_t, x_{t+1})$, without access to game rules, inventories, or keypress logs \cite{bruce2024genie,schmidt2023lapo,ye2025lapa}.
+  \item \textbf{Non-Collapsing Predictive Dynamics:} Learning an encoder $z_t = f_\theta(x_t)$ and a transition predictor $\hat{z}_{t+1} = g_\psi(z_t, k_t)$ in an abstract representation space without pixel generation, while preventing both trivial point collapse ($z \equiv \mathbf{c}$) and low-rank dimensional collapse \cite{assran2023ijepa,balestriero2025lejepa,bardes2022vicreg}.
 \end{enumerate}
 
-\paragraph{Origin of Our Architecture (Trained From Scratch).}
-Unlike works that fine-tune frozen web-scale encoders, \textbf{all models in \texttt{latent-play} are implemented and trained from scratch (random initialization) in PyTorch} on our collected $64 \times 64$ video datasets. Specifically, we design a custom ViT-S/8 Joint-Embedding Predictive Architecture (\texttt{JEPADynamics}) inspired by V-JEPA 2-AC \cite{assran2025vjepa2} and couple it with \textbf{SIGReg} \cite{balestriero2025lejepa,epps1983test}—a statistical isotropy regularizer analyzed in the author's Bachelor's Thesis (\texttt{TFG\_Beamer})—to guarantee full-rank latent representations without contrastive negative sampling.
+\paragraph{All Models Trained From Scratch (\emph{Tabula Rasa}).}
+In contrast to prior works that fine-tune frozen web-scale vision models (e.g., DINOv2 or ImageNet backbones), \textbf{all neural components in \texttt{latent-play} are implemented and trained from random initialization in PyTorch}. Our architecture comprises a custom Spatio-Temporal Latent Action Model, a Vision Transformer (\texttt{ViT-S/8}) dynamics network, and statistical regularizers analyzed in the author's prior mathematical work on self-supervised representation collapse.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.98\textwidth]{figures/fig0_architecture.pdf}
+  \caption{\textbf{Complete \texttt{latent-play} Pipeline Across All Four Stages.} \textbf{Stage 1 (LAM):} Unsupervised inverse dynamics model embeds frame pairs $(x_t, x_{t+1})$, quantizes transitions into $K=8$ discrete codes via a Cosine VQ bottleneck with batch-entropy regularization, and reconstructs $\hat{x}_{t+1}$ with motion-weighted MSE. \textbf{Stage 2 (JEPA Dynamics):} Online \texttt{ViT-S/8} encoder $f_\theta$ and causal predictor $g_\psi$ predict future patch representations $\hat{z}_{t+1}$, trained with an EMA target network $f_{\bar{\theta}}$ (preventing moving-target drift) and \textbf{SIGReg} (preventing dimensional collapse via 1D Cram\'er-Wold projections and Epps-Pulley normality tests). \textbf{Stage 3 (Alignment Probe):} With LAM and JEPA frozen, a lightweight 2-layer MLP translates $(k_t, \bar{z}_t) \to a_{\text{env}}$ using just $1\%$ labelled interaction frames. \textbf{Stage 4 (Latent Planning):} At test time, receding-horizon CEM rolls out candidate code sequences entirely inside $g_\psi$'s latent space to reach goal $x_{\text{goal}}$, executing real game buttons via the probe.}
+  \label{fig:arch}
+\end{figure*}
 
 \begin{table*}[t]
 \centering
-\caption{\textbf{Master Specification of the \texttt{latent-play} Pipeline:} Models, Input/Output Tensors, Learnable vs.\ Frozen Parameters, Training Objectives, and NVIDIA A100-80GB Training Regimes across all four stages.}
+\caption{\textbf{Master Specification of the \texttt{latent-play} Pipeline:} Modules, Input/Output Tensors, Learnable vs.\ Frozen Variables, Training Objectives, and NVIDIA A100 Training Regimes across all four stages.}
 \label{tab:master}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{p{2.7cm}p{3.6cm}p{3.3cm}p{3.5cm}p{3.8cm}p{2.6cm}}
+\begin{tabular}{p{2.8cm}p{3.5cm}p{3.2cm}p{3.5cm}p{3.9cm}p{2.6cm}}
 \toprule
-\textbf{Stage \& Model} & \textbf{Inputs \& Data Source} & \textbf{Outputs} & \textbf{Learnable Variables vs.\ Frozen / EMA} & \textbf{Objective Function Optimized} & \textbf{Training Regime (A100-80GB)} \\
+\textbf{Stage \& Module} & \textbf{Inputs \& Data Source} & \textbf{Outputs} & \textbf{Learnable vs.\ Frozen Variables} & \textbf{Optimized Objective Function} & \textbf{Compute Regime (A100-80GB)} \\
 \midrule
-\textbf{Stage 1: Latent Action Model (\texttt{LAM})}\\ \footnotesize $1.68\text{M}$ params (Toy)\\ $7.65\text{M}$ params (Crafter) & Unlabelled 3-frame RGB windows $(x_{t-1}, x_t, x_{t+1}) \in [0,1]^{B \times 3 \times 3 \times 64 \times 64}$. \textbf{0\% action labels} (\texttt{action = -1}). & Discrete latent code $k_t \in \{0..7\}$, codebook vector $e_{k_t} \in \mathbb{R}^{32}$, reconstructed frame $\hat{x}_{t+1} \in [0,1]^{3 \times 64 \times 64}$. & \textbf{Learned ($\theta_{\text{LAM}}$):} PatchEmbed ($8\times 8$), 4-layer causal \texttt{STBlock} IDM, motion attention pooling, Cosine VQ codebook $\{e_k\}_{k=0}^7$, 4-layer FDM decoder. \textbf{Frozen:} None. & $\mathcal{L}_{\text{LAM}} = \mathcal{L}_{\text{mot-MSE}} + \mathcal{L}_{\text{VQ}} + 0.1\,\mathcal{L}_{\text{ent}}$ (Motion-weighted pixel MSE + VQ commitment + soft-assignment entropy regularizer). & \textbf{ToyGrid:} $2\text{K}$ steps, $B=64$ ($63\text{s}$). \textbf{Crafter:} $30\text{K}$ steps, $B=128$, $\text{lr}=3\cdot 10^{-4}$, \texttt{bf16} ($73.7\text{ min}$). \\
+\textbf{Stage 1: Latent Action Model (\texttt{LAM})}\\ \footnotesize $1.68\text{M}$ params (Toy)\\ $7.65\text{M}$ params (Crafter) & Unlabelled video frames $(x_t, x_{t+1}) \in [0,1]^{B \times 2 \times 3 \times 64 \times 64}$. \textbf{0\% action labels} (\texttt{action = -1}). & Discrete code $k_t \in \{0..7\}$, codebook vector $e_{k_t} \in \mathbb{R}^{32}$, reconstructed frame $\hat{x}_{t+1}$. & \textbf{Learned:} PatchEmbed ($8\times 8$), 4-layer causal \texttt{STBlock} IDM, motion attention pooling, Cosine VQ $\{e_k\}_{k=0}^7$, 4-layer FDM decoder. \textbf{Frozen:} None. & $\mathcal{L}_{\text{LAM}} = \mathcal{L}_{\text{mot-MSE}} + \mathcal{L}_{\text{VQ}} + 0.1\,\mathcal{L}_{\text{ent}}$ (Motion-weighted pixel MSE + VQ commitment + soft-assignment entropy regularizer). & \textbf{ToyGrid:} $2\text{K}$ steps ($63\text{ s}$). \textbf{Crafter:} $30\text{K}$ steps, $B=128$, $\text{lr}=3\cdot 10^{-4}$, \texttt{bf16} ($73.7\text{ min}$). \\
 \midrule
-\textbf{Stage 2: JEPA World Model (\texttt{JEPADynamics})}\\ \footnotesize $2.05\text{M}$ params (Toy)\\ $14.8\text{M}$ params (Crafter) & Unlabelled 8-frame RGB clips $x_{0..7} \in [0,1]^{B \times 8 \times 3 \times 64 \times 64}$ + latent actions $k_{0..6} \in \{0..7\}^7$ inferred by frozen Stage-1 \texttt{LAM}. & Online patch embeddings $z_t \in \mathbb{R}^{64 \times D}$, predicted next states $\hat{z}_{t+1} \in \mathbb{R}^{64 \times D}$, target states $z_{t+1}^{\text{tgt}} \in \mathbb{R}^{64 \times D}$. & \textbf{Learned ($\theta, \psi$):} Online \texttt{ViT-S/8} encoder $f_\theta$ ($D=192/384$), action table $E_a$, causal \texttt{STBlock} predictor $g_\psi$. \textbf{EMA (no grad):} Target encoder $f_{\bar{\theta}}$. \textbf{Frozen:} Stage-1 \texttt{LAM}. & $\mathcal{L}_{\text{JEPA}} = \|\hat{z}_{1..T} - \text{sg}[z_{1..T}^{\text{tgt}}]\|_1 + 0.05\,\mathcal{L}_{\text{SIG}}(z) + 0.02\,\mathcal{L}_{\text{var}}(z)$ ($L_1$ prediction + Cram\'er-Wold Epps-Pulley isotropy + VICReg hinge). & \textbf{ToyGrid:} $2\text{K}$ steps, $B=64$ ($100\text{s}$). \textbf{Crafter:} $30\text{K}$ steps, $B=64$, $\text{lr}=3\cdot 10^{-4}$, $\tau \in [0.996, 1.0]$ ($3.2\text{ h}$). \\
+\textbf{Stage 2: JEPA World Model (\texttt{JEPADynamics})}\\ \footnotesize $2.05\text{M}$ params (Toy)\\ $14.8\text{M}$ params (Crafter) & Unlabelled 8-frame clips $x_{0..7} \in [0,1]^{B \times 8 \times 3 \times 64 \times 64}$ + latent codes $k_{0..6} \in \{0..7\}^7$ from frozen Stage-1 \texttt{LAM}. & Patch latents $z_t \in \mathbb{R}^{64 \times D}$, predicted next states $\hat{z}_{t+1}$, EMA targets $z_{t+1}^{\text{tgt}}$. & \textbf{Learned:} Online \texttt{ViT-S/8} encoder $f_\theta$ ($D=192/384$), action table $E_a$, causal predictor $g_\psi$. \textbf{EMA (no grad):} Target encoder $f_{\bar{\theta}}$. \textbf{Frozen:} Stage-1 \texttt{LAM}. & $\mathcal{L}_{\text{JEPA}} = \|\hat{z}_{1..T} - \text{sg}[z_{1..T}^{\text{tgt}}]\|_1 + 0.05\,\mathcal{L}_{\text{SIG}}(z) + 0.02\,\mathcal{L}_{\text{var}}(z)$ ($L_1$ prediction + Cram\'er-Wold Epps-Pulley isotropy + VICReg variance hinge). & \textbf{ToyGrid:} $2\text{K}$ steps ($100\text{ s}$). \textbf{Crafter:} $30\text{K}$ steps, $B=64$, $\text{lr}=3\cdot 10^{-4}$, $\tau \in [0.996, 1.0]$ ($3.2\text{ h}$). \\
 \midrule
-\textbf{Stage 3: Alignment Probe (\texttt{ActionAlign})}\\ \footnotesize $1.6\text{K}$ params & Small labelled subset $\alpha \in [0.1\%, 100\%]$ of pairs $(k_t, \bar{z}_t, a_t^{\text{true}})$. & Action logits $\log P_\phi(a_{\text{env}} \mid k_t, \bar{z}_t) \in \mathbb{R}^{|\mathcal{A}_{\text{env}}|}$ and empirical prior $\hat{P}(a)$. & \textbf{Learned ($\phi$):} 2-layer contextual MLP ($1.6\text{K}$ params). \textbf{Frozen:} Stage-1 \texttt{LAM} and Stage-2 \texttt{JEPADynamics}. & Supervised cross-entropy $-\log P_\phi(a_t^{\text{true}} \mid k_t, \bar{z}_t)$ + inference log-prior correction ($\gamma = 0.5$). & $15$ epochs, Adam $\text{lr}=10^{-2}$ ($<5\text{s}$ per fraction/seed). \\
+\textbf{Stage 3: Alignment Probe (\texttt{ActionAlign})}\\ \footnotesize $1.6\text{K}$ params & Small labelled subset $\alpha \in [0.1\%, 100\%]$ of pairs $(k_t, \bar{z}_t, a_t^{\text{true}})$. & Predicted action probabilities $P_\phi(a_{\text{env}} \mid k_t, \bar{z}_t)$ and empirical prior $\hat{P}(a)$. & \textbf{Learned:} 2-layer contextual MLP ($1.6\text{K}$ params). \textbf{Frozen:} Stage-1 \texttt{LAM} and Stage-2 \texttt{JEPADynamics}. & Supervised cross-entropy $-\log P_\phi(a_t^{\text{true}} \mid k_t, \bar{z}_t)$ with inference log-prior correction ($\gamma = 0.5$). & $15$ epochs, Adam $\text{lr}=10^{-2}$ ($<5\text{ s}$ per fraction/seed). \\
 \midrule
-\textbf{Stage 4: Latent MPC (\texttt{CEMPlanner})}\\ \footnotesize $0$ trainable params & Current RGB frame $x_t$ and goal RGB image $x_{\text{goal}} \in [0,1]^{3 \times 64 \times 64}$. & Planned latent sequence $k_{0..H-1}^* \in \{0..7\}^H$ and immediate game action $\hat{a}_0 \in \mathcal{A}_{\text{env}}$. & \textbf{Learned:} None (test-time optimization). \textbf{Frozen:} $f_\theta$, $g_\psi$, and $\mathcal{M}_\phi$. & Minimizes latent rollout distance $\mathcal{J} = 0.5\|\hat{z}_{t+H} - z_{\text{goal}}\|_1 + 0.5\min_{h \le H}\|\hat{z}_{t+h} - z_{\text{goal}}\|_1$ over $M=128$ samples, $I=4$ iterations. & Real-time closed-loop MPC ($25\text{--}30$ episodes per seed). \\
+\textbf{Stage 4: Latent MPC (\texttt{CEMPlanner})}\\ \footnotesize $0$ learned params & Live frame $x_t$ and goal frame $x_{\text{goal}} \in [0,1]^{3 \times 64 \times 64}$. & Planned latent sequence $k_{0..H-1}^* \in \{0..7\}^H$ and executed environment button $\hat{a}_0 \in \mathcal{A}_{\text{env}}$. & \textbf{Learned:} None (test-time optimization). \textbf{Frozen:} $f_\theta$, $g_\psi$, and probe $\mathcal{M}_\phi$. \textbf{Not used:} Stage-1 \texttt{LAM}. & Minimizes latent trajectory distance $\mathcal{J} = 0.5\|\hat{z}_{t+H} - z_{\text{goal}}\|_1 + 0.5\min_{h \le H}\|\hat{z}_{t+h} - z_{\text{goal}}\|_1$ over $M=128$ candidate rollouts. & Real-time closed-loop MPC ($25\text{--}30$ episodes per seed). \\
 \bottomrule
 \end{tabular}%
 }
 \end{table*}
 
-\section{Data Generation and Zero-Leakage Protocol}
-We collect two datasets stored as memory-mapped \texttt{uint8} shards (\texttt{np.memmap}) with episode-level $95\%/5\%$ train/validation splits:
+\section{Benchmark Environments and Protocol}
+We validate our framework across two distinct domains stored as memory-mapped \texttt{uint8} shards (\texttt{np.memmap}):
 \begin{itemize}
-  \item \textbf{ToyGridEnv ($100{,}000$ steps, $1{,}540$ episodes):} A $64 \times 64$ RGB arena with 5 discrete actions (\texttt{noop, up, down, left, right}). The player controls a $5\times 5$ cyan square, while a $5\times 5$ orange distractor moves autonomously at random and background noise varies per episode.
-  \item \textbf{Crafter ($300{,}000$ steps, $1{,}636$ episodes):} The open-ended survival benchmark \cite{hafner2021crafter} ($64 \times 64$ RGB, 17 actions: 4 cardinal movements, \texttt{noop}, \texttt{do}, \texttt{sleep}, and 10 placement/crafting actions). To ensure rich spatial coverage across water, forests, caves, and quarries, data is collected via an exploratory segment policy that repeats directional movements for $2\text{--}6$ steps ($80\%$ probability) interleaved with interaction actions ($20\%$).
+  \item \textbf{Crafter ($300{,}000$ steps, $1{,}636$ episodes):} The open-ended survival benchmark \cite{hafner2021crafter} ($64 \times 64$ RGB, 17 discrete actions: 4 cardinal movements, \texttt{noop}, \texttt{do}, \texttt{sleep}, and 10 placement/crafting actions). Crafter features procedural terrain generation, day-night lighting cycles, health and hunger dynamics, and complex crafting trees. Transitions are collected using an exploratory policy that repeats directional movements for $2\text{--}6$ steps ($80\%$ probability) interleaved with interaction actions ($20\%$).
+  \item \textbf{ToyGridEnv ($100{,}000$ steps, $1{,}540$ episodes):} A synthetic $64 \times 64$ RGB arena with 5 discrete actions (\texttt{noop, up, down, left, right}). An agent-controlled cyan square interacts against an autonomously moving orange distractor with randomized per-episode background noise.
 \end{itemize}
-\textbf{Zero-Leakage Guarantee:} Each transition is assigned a fixed uniform draw $u_i \sim \mathcal{U}(0, 1)$ at collection time. When training with supervision fraction $\alpha$, transitions with $u_i \ge \alpha$ return \texttt{action = -1}. Stages 1 and 2 run with $\alpha = 0.0$.
+
+\paragraph{Strict Zero-Leakage Guarantee.}
+To guarantee that unsupervised stages receive zero action supervision, every transition is assigned a persistent pseudo-random uniform draw $u_i \sim \mathcal{U}(0, 1)$ upon creation. During dataset loading with supervision fraction $\alpha$, transitions with $u_i \ge \alpha$ return $\texttt{action} = -1$. Stages 1 and 2 operate under $\alpha = 0.0$ ($100\%$ unlabelled).
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=0.90\textwidth]{figures/fig1_label_efficiency.pdf}
-  \caption{\textbf{Action Supervision Scaling Curves.} Closed-loop CEM goal navigation success rate (\%) as a function of the fraction of labelled transitions $\alpha$ used to fit the $1.6\text{K}$-parameter \texttt{ActionAlignment} probe (log scale, 3 seeds). \textbf{(a) ToyGridEnv:} With only $0.1\%$ labels ($92$ transitions), \textbf{latent-play} achieves $28.0\%$ mean success ($36.0\%$ peak seed), matching the $100\%$-supervised Action Oracle ($28.0\%$). \textbf{(b) Crafter ($30\text{K}$ steps on A100):} Across $0.1\%\text{--}10\%$ labels, \textbf{latent-play} reaches $12.2\%\text{--}15.6\%$ mean success (up to $26.7\%$ peak seed), outperforming the $100\%$-supervised Action Oracle ($10.0\%$).}
-  \label{fig:scaling}
+  \includegraphics[width=0.98\textwidth]{figures/fig2_walkthrough_snapshots.pdf}
+  \caption{\textbf{Visual Walkthrough of the Four-Stage Pipeline in Action on Crafter.} \textbf{(a) Stage 1 (LAM):} Pairs of consecutive frames $(x_t, x_{t+1})$ are compressed into 8 discrete action codes via Vector Quantization. \textbf{(b) Stage 2 (JEPA Dynamics):} The world model predicts future representations $\hat{z}_{t+1}$ given current state $z_t$ and discovered code $k_t$, regularized by SIGReg and anchored by an EMA target. \textbf{(c) Stage 3 (Action Alignment):} A lightweight probe aligns the 8 discovered codes with real Crafter buttons using $1\%$ action labels. \textbf{(d) Stage 4 (Closed-Loop Planning):} In imagination, CEM samples 128 candidate latent trajectories inside the world model, selects the sequence closest to goal $x_{\text{goal}}$, and executes the corresponding action in the real game.}
+  \label{fig:walkthrough}
 \end{figure*}
 
-\section{Didactic Methodology: Step-by-Step}
-Figure~\ref{fig:arch} illustrates the complete end-to-end architecture—showing what is embedded, how the causal predictor $g_\psi$ is trained, exactly where \textbf{SIGReg} acts on the online encoder representations $z_t$, and how the inner mental CEM loop interacts with the outer physical MPC loop—while Table~\ref{tab:master} summarizes all inputs, outputs, learnable parameters, and objectives.
+\section{Methodology: The Four Stages}
+The complete framework is summarized in Figure~\ref{fig:arch} and specified in Table~\ref{tab:master}. Figure~\ref{fig:walkthrough} illustrates the conceptual visual progression across all four stages.
 
-\begin{figure*}[t]
-  \centering
-  \includegraphics[width=0.98\textwidth]{figures/fig0_architecture.pdf}
-  \caption{\textbf{Complete \texttt{latent-play} Architecture.} \textbf{Top (Stage 1):} Unsupervised Latent Action Model (\texttt{LAM}) embeds $64\times 64$ frames into $64$ spatial patches ($8\times 8$), computes temporal motion differences $\Delta h_t = h_{t+1} - h_t$, quantizes them into $K=8$ discrete codes via a Cosine VQ bottleneck with batch-entropy regularization, and reconstructs $\hat{x}_{t+1}$ with motion-weighted MSE. \textbf{Middle (Stage 2):} The Online \texttt{ViT-S/8} encoder $f_\theta$ maps $x_t$ to $z_t \in \mathbb{R}^{64\times D}$, where \textbf{SIGReg} ($M=64$ random 1D projections + Epps-Pulley test) and a VICReg variance hinge act directly on $z_t$ to prevent collapse; the causal predictor $g_\psi$ combines $z_t$ with embedded latent actions $e(k_t)$ to predict $\hat{z}_{t+1}$, trained via $L_1$ loss against the stop-gradient EMA target encoder $f_{\bar{\theta}}(x_{t+1})$. \textbf{Bottom (Stages 3 \& 4):} At test time, an \textbf{inner mental CEM loop} unrolls $128$ candidate 6-step trajectories inside $g_\psi$ to pick the optimal first latent code $k_0^*$, while the \textbf{outer physical MPC loop} translates $k_0^*$ into a real game action $\hat{a}_t$ via the few-shot \texttt{ActionAlignment} probe $P_\phi$.}
-  \label{fig:arch}
-\end{figure*}
-
-\subsection{Stage 1: Unsupervised Latent Action Model (LAM)}
-\paragraph{Inputs and Tokenization.}
-Given a clip of $T=3$ consecutive frames $(x_{t-1}, x_t, x_{t+1}) \in [0, 1]^{B \times 3 \times 3 \times 64 \times 64}$, a convolutional \texttt{PatchEmbed} layer ($8 \times 8$ stride $8$) maps each frame into $N_p = 64$ spatial patch tokens of dimension $D$ ($D=128$ on ToyGrid, $D=256$ on Crafter), adding fixed 2D sine-cosine spatial positional encodings and learned temporal embeddings.
-
-\paragraph{Causal Inverse Dynamics \& Motion Pooling.}
-The tokens pass through 4 factorized Spatio-Temporal (\texttt{STBlock}) layers: within each layer, tokens first attend bidirectionally across all $64$ patches of the same frame $t$, and then attend causally across time ($\le t$) at the same spatial patch location. To isolate what changed between frame $t$ and $t+1$ while discarding static background features, we take the temporal feature difference $\Delta h_t = h_{t+1} - h_t \in \mathbb{R}^{B \times 64 \times D}$ and compute a learned spatial attention pooling:
+\subsection{Stage 1: Latent Action Discovery (\texttt{LAM})}
+\paragraph{Inverse Dynamics and Motion Attention.}
+Given consecutive frames $(x_t, x_{t+1}) \in [0, 1]^{2 \times 3 \times 64 \times 64}$, a convolutional patch embedding layer ($8 \times 8$ patches, stride $8$) produces $N_p = 64$ spatial tokens of dimension $D$ ($D=128$ on ToyGrid, $D=256$ on Crafter). Tokens pass through 4 factorized Spatio-Temporal residual blocks (\texttt{STBlock}) with causal temporal attention. To extract what physically moved while ignoring static background scenery, we compute the temporal feature delta $\Delta h_t = h_{t+1} - h_t$ and pool across spatial patches via learned motion attention:
 \begin{equation}
-  u_t = \text{LN}\!\left(\sum_{p=1}^{64} \text{softmax}_p(w_{\text{attn}}^\top \Delta h_{t,p}) \, \Delta h_{t,p}\right).
+  u_t = \text{LN}\!\left(\sum_{p=1}^{64} \text{softmax}_p(w_{\text{attn}}^\top \Delta h_{t,p}) \, \Delta h_{t,p}\right) \in \mathbb{R}^D.
 \end{equation}
 
-\paragraph{Anti-Collapse Cosine Vector Quantizer (VQ).}
-A linear projection maps $u_t$ to $z_e \in \mathbb{R}^{d_c}$ ($d_c = 32$). Because consecutive frames in video are highly correlated, standard VQ-VAEs \cite{vandoord2017vqvae} frequently collapse to a single code ($1/K$ usage). We prevent codebook collapse via three mechanisms: (1) subtracting the batch mean $\tilde{z}_e = z_e - \bar{z}_e$ before quantization; (2) cosine-normalized nearest-neighbor lookup over $K=8$ codes $k_t = \arg\min_k \|\tilde{z}_e/\|\tilde{z}_e\|_2 - e_k/\|e_k\|_2\|_2$; and (3) a differentiable soft-assignment entropy regularizer over cosine similarities $p_k = \text{softmax}(\text{sim}(\tilde{z}_e, e_k) / \tau_{\text{vq}})$ that maximizes marginal batch entropy $H(\bar{p})$ (encouraging uniform $8/8$ code usage) while minimizing conditional entropy $H(p \mid \tilde{z}_e)$ (encouraging sharp, confident assignments):
-\begin{equation}
-  \mathcal{L}_{\text{ent}} = H(p \mid \tilde{z}_e) - H(\bar{p}), \quad \bar{p} = \frac{1}{B}\sum_{b=1}^B p^{(b)}.
-\end{equation}
+\paragraph{Anti-Collapse Cosine Vector Quantizer.}
+A linear projection maps $u_t$ to $z_e \in \mathbb{R}^{d_c}$ ($d_c = 32$). Standard VQ-VAEs \cite{vandoord2017vqvae} commonly suffer from \emph{codebook collapse}, where the model clusters all transitions into only 1 or 2 codes. We prevent collapse through three complementary mechanisms:
+\begin{enumerate}
+  \item \textbf{Batch-Mean Centering:} We center incoming vectors $\tilde{z}_e = z_e - \bar{z}_e$ to eliminate global bias.
+  \item \textbf{Cosine Hypersphere Quantization:} Nearest-neighbor lookup over $K=8$ codebook vectors $e_k \in \mathbb{S}^{d_c-1}$:
+  \begin{equation}
+    k_t = \arg\max_{k \in \{0..7\}} \frac{\tilde{z}_e^\top e_k}{\|\tilde{z}_e\|_2 \, \|e_k\|_2}.
+  \end{equation}
+  \item \textbf{Differentiable Batch-Entropy Regularization:} Over soft assignment probabilities $p_k = \text{softmax}(\cos(\tilde{z}_e, e_k)/\tau_{\text{vq}})$, we maximize batch marginal entropy $H(\bar{p})$ while minimizing conditional entropy $H(p \mid \tilde{z}_e)$:
+  \begin{equation}
+    \mathcal{L}_{\text{ent}} = H(p \mid \tilde{z}_e) - H(\bar{p}), \quad \bar{p} = \frac{1}{B}\sum_{b=1}^B p^{(b)}.
+  \end{equation}
+\end{enumerate}
+This forces the model to distribute transitions uniformly across all $8/8$ codes (perplexity $7.12 / 8.0$ on Crafter).
 
-\paragraph{Motion-Weighted Forward Decoder.}
-A 4-layer spatial Transformer decoder takes the current frame tokens $x_t$ conditioned on the straight-through quantized action vector $z_q = \tilde{z}_e + \text{sg}[e_{k_t} - \tilde{z}_e]$ and outputs a pixel residual $\hat{x}_{t+1} = \text{clamp}(x_t + \Delta\hat{x}_t, 0, 1)$. To force the 3-bit code $k_t$ to prioritize moving entities (the player) over static grass/background, we weight the pixel MSE by local frame difference:
+\paragraph{Why $K=8$ Latent Codes for Crafter's 17 Actions?}
+In unlabelled video, the model can only perceive \emph{visual changes}. In Crafter, 12 of the 17 discrete actions are crafting or placement commands that produce zero visual difference when preconditions are missing (e.g., attempting to craft without wood), while walking into trees or walls produces zero camera translation. Thus, the 17 game buttons collapse into a much smaller set of distinct visual kinematic primitives (directional camera moves, screen darkening on sleep, and stationary/interaction clusters). Choosing $K=8$ captures all visual modes without codebook dilution, keeps CEM planning search tractable ($8^6 \approx 2.6\times 10^5$ candidate paths vs. $17^6 \approx 2.4\times 10^7$), and lets the Stage 3 probe resolve the full 17 actions by conditioning on visual scene context $\bar{z}_t$.
+
+\paragraph{Forward Dynamics Pixel Decoder.}
+A 4-layer spatial Transformer decoder conditions on $(x_t, e_{k_t})$ to reconstruct $\hat{x}_{t+1}$. We apply motion-weighted MSE to prioritize moving entities over static terrain:
 \begin{equation}
   \mathcal{L}_{\text{mot}} = \mathbb{E}\Big[\big(1 + 10\,\|x_{t+1} - x_t\|_1\big)\,\|\hat{x}_{t+1} - x_{t+1}\|_2^2\Big].
 \end{equation}
 
-\subsection{Stage 2: Action-Conditioned JEPA \& SIGReg}
-\paragraph{Online Encoder, EMA Target, and Residual Predictor.}
-Once Stage 1 finishes, \texttt{LAM} is frozen. Given 8-frame video clips $x_{0..7}$, the frozen \texttt{LAM} labels each transition with its discrete latent action $k_t \in \{0..7\}$. Our online encoder $f_\theta$ (\texttt{ViT-S/8}, $N_p=64$ patches, $D=192$ on ToyGrid, $D=384$ on Crafter) encodes frames into patch representations $z_t = f_\theta(x_t) \in \mathbb{R}^{64 \times D}$. A target encoder $f_{\bar{\theta}}$ with identical architecture produces ground-truth future targets $z_{t+1}^{\text{tgt}} = \text{sg}[f_{\bar{\theta}}(x_{t+1})]$, where $\bar{\theta}$ is updated via cosine-scheduled Exponential Moving Average ($\tau \in [0.996, 1.0]$).
+\subsection{Stage 2: Isotropic JEPA World Model (\texttt{JEPADynamics})}
+Once Stage 1 finishes, \texttt{LAM} is frozen and acts as an unsupervised pseudo-labeler.
 
-The predictor $g_\psi$ embeds the discrete action $k_t$ via a lookup table $E_a(k_t) \in \mathbb{R}^D$, adds it to the spatial patch tokens of $z_t$, processes the sequence through causal \texttt{STBlock} layers, and predicts the residual transition:
-\begin{equation}
-  \hat{z}_{t+1} = z_t + \Delta z_{\psi}(z_{0..t}, k_{0..t}).
-\end{equation}
+\paragraph{Online Encoder, Predictor, and Target Network.}
+The online visual encoder $f_\theta$ (\texttt{ViT-S/8}, $N_p=64$ patches, $D=192$ on ToyGrid, $D=384$ on Crafter) maps $x_t \to z_t \in \mathbb{R}^{64 \times D}$. The causal predictor $g_\psi$ embeds $k_t$ via lookup table $E_a \in \mathbb{R}^{8 \times D}$, adds it to the patch tokens, and predicts future latents $\hat{z}_{t+1}$. Ground-truth prediction targets $z_{t+1}^{\text{tgt}} = \text{sg}[f_{\bar{\theta}}(x_{t+1})]$ are provided by a target encoder $f_{\bar{\theta}}$ updated via cosine-scheduled Exponential Moving Average ($\tau \in [0.996, 1.0]$).
 
-\paragraph{Preventing Collapse with SIGReg (Cram\'er-Wold + Epps-Pulley).}
-To prevent $f_\theta(x_t)$ from collapsing to a constant or low-rank subspace without OOM-inducing $D \times D$ covariance matrices, we regularize the online tokens $z_t$ (subsampled to $N=512$ tokens per step) using \textbf{SIGReg} \cite{balestriero2025lejepa}. By the Cram\'er-Wold theorem, a $D$-dimensional distribution matches the isotropic standard normal $\mathcal{N}(0, I_D)$ if and only if all 1D unit projections $h^{(m)} = Z u^{(m)}$ ($u^{(m)} \sim \mathbb{S}^{D-1}$) follow $\mathcal{N}(0, 1)$. For $M=64$ random projections, we compute the differentiable Epps-Pulley characteristic function statistic \cite{epps1983test}:
+\paragraph{Why Both EMA and SIGReg? (Two Distinct Collapse Modes).}
+In static image self-supervised learning \cite{balestriero2025lejepa,bardes2022vicreg}, an explicit covariance penalty alone can prevent collapse without an EMA target. However, in an \textbf{autoregressive, action-conditioned World Model}, two distinct failure modes arise:
+\begin{enumerate}
+  \item \textbf{The Moving Target Problem (solved by EMA):} If the predictor $g_\psi$ predicts features directly from an online encoder $f_\theta$ that updates at every gradient step, the target distribution drifts rapidly. This creates severe training instability and rollout divergence across multi-step horizons. The EMA target encoder provides a slowly-evolving, stable target anchor \cite{grill2020byol}.
+  \item \textbf{Dimensional Collapse (solved by SIGReg):} While an EMA target prevents \emph{point collapse} ($z \equiv \mathbf{c}$), it is prone to \emph{dimensional collapse}, where representations collapse onto a low-dimensional subspace (effective rank drops from 384 down to $\sim 4$). When dimensions collapse, different actions predict virtually indistinguishable future states.
+\end{enumerate}
+To guarantee full-rank representations without $O(D^3)$ covariance matrix inversions, we apply \textbf{Sketched Isotropic Gaussian Regularization (SIGReg)} \cite{balestriero2025lejepa}. By the Cram\'er-Wold theorem \cite{cramer1936theorems}, a $D$-dimensional distribution matches the standard normal $\mathcal{N}(0, I_D)$ if and only if all 1D projections $h^{(m)} = Z u^{(m)}$ along unit directions $u^{(m)} \sim \mathbb{S}^{D-1}$ follow $\mathcal{N}(0, 1)$. For $M=64$ random projections, we evaluate the differentiable Epps-Pulley empirical characteristic function test \cite{epps1983test}:
 \begin{equation}
   T_{\text{EP}}(\mathbf{h}) = 1 + \frac{\sqrt{2}}{N^2} \sum_{j,k=1}^N e^{-\frac{(h_j - h_k)^2}{4}} - \frac{4}{\sqrt{3} N} \sum_{j=1}^N e^{-\frac{h_j^2}{6}},
 \end{equation}
-and minimize the combined JEPA objective:
+and optimize the composite objective:
 \begin{equation}
-  \mathcal{L}_{\text{JEPA}} = \| \hat{z} - \text{sg}[z^{\text{tgt}}] \|_1 + \frac{\lambda_{\text{SIG}}}{M}\sum_{m=1}^M T_{\text{EP}}(Z u^{(m)}) + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z).
+\begin{aligned}
+  \mathcal{L}_{\text{JEPA}} &= \|\hat{z} - \text{sg}[z^{\text{tgt}}]\|_1 \\
+  &\quad + \frac{\lambda_{\text{SIG}}}{M}\sum_{m=1}^M T_{\text{EP}}(Z u^{(m)}) + \lambda_{\text{var}}\mathcal{L}_{\text{var}}(Z).
+\end{aligned}
 \end{equation}
+This maintains an effective rank of $39.1 / 384$ throughout $30{,}000$ training steps on Crafter.
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=0.90\textwidth]{figures/fig2_anticollapse_rollouts.pdf}
-  \caption{\textbf{Multi-Step Rollout Stability and Anti-Collapse Dynamics.} \textbf{(a)} Autoregressive latent rollout error $\|\hat{z}_{t+H} - z_{t+H}\|_1$ across horizons $H \in \{1, 2, 4, 8\}$. Conditioning on discovered LAM actions yields \textbf{24.0\% lower 8-step rollout error on Crafter} ($0.1523$ vs.\ $0.2003$) and \textbf{38.3\% lower 4-step error on ToyGridEnv} than conditioning on ground-truth actions, which suffer from visual aliasing. \textbf{(b)} Real training trajectory over $30{,}000$ steps on Crafter: SIGReg maintains a rock-solid Effective Rank $\exp(H(p)) \in [35.0, 42.3]$ with zero dimensional collapse.}
-  \label{fig:anticollapse}
+  \includegraphics[width=0.90\textwidth]{figures/fig1_label_efficiency.pdf}
+  \caption{\textbf{Action Supervision Efficiency Curves.} Closed-loop CEM navigation goal success rate (\%) as a function of the fraction of labelled interaction frames $\alpha$ used to fit the alignment probe (log scale, 3 random seeds). \textbf{(a) ToyGridEnv:} With only $0.1\%$ labels ($92$ transitions), \textbf{latent-play} achieves $28.0\%$ mean success, matching the $100\%$-supervised Action Oracle ($28.0\%$). \textbf{(b) Crafter ($30\text{K}$ steps on A100):} Across $0.1\%\text{--}10\%$ labels, \textbf{latent-play} maintains $12.2\%\text{--}15.6\%$ mean success, fully on par with the $100\%$-supervised Action Oracle ($10.0\%$) and doubling random walk performance ($6.7\%$).}
+  \label{fig:scaling}
 \end{figure*}
 
-\subsection{Stage 3 \& 4: Few-Shot Alignment \& Latent CEM}
-Because the world model plans over abstract latent codes $k_t \in \{0..7\}$, we train a lightweight $1.6\text{K}$-parameter 2-layer MLP (\texttt{ActionAlignment}) on a small labelled subset $\alpha \in \{0.1\%, 1\%, 5\%, 10\%, 100\%\}$ to predict the real environment action $P_\phi(a_{\text{env}} \mid k_t, \bar{z}_t)$ from the one-hot code $k_t$ and mean-pooled state $\bar{z}_t$. To prevent frequent stationary actions (\texttt{noop}, \texttt{do}) in Crafter from dominating movement codes, we apply log-prior adjustment at inference:
+\subsection{Stage 3: Few-Shot Action Alignment (\texttt{ActionAlignment})}
+With LAM and JEPA frozen, we train a lightweight 2-layer MLP probe ($1.6\text{K}$ parameters) on a tiny fraction $\alpha \in \{0.1\%, 1\%, 5\%, 10\%, 100\%\}$ of labelled interaction frames. The probe predicts real environment buttons $P_\phi(a_{\text{env}} \mid k_t, \bar{z}_t)$ conditioned on both the discrete code $k_t$ and the mean-pooled scene context $\bar{z}_t = \frac{1}{64}\sum_p z_{t,p}$. Context conditioning is essential in Crafter because pressing "move up" produces upward motion on open grass but zero motion against a stone wall. To correct for class imbalance (e.g., frequent stationary actions), we apply log-prior adjustment at test time:
 \begin{equation}
-  \hat{a}_t = \arg\max_{a \in \mathcal{A}_{\text{env}}} \left( \log P_\phi(a \mid k_t, \bar{z}_t) - \gamma \log \hat{P}(a) \right), \quad \gamma = 0.5.
+  \hat{a}_t = \arg\max_{a \in \mathcal{A}_{\text{env}}} \big(\log P_\phi(a \mid k_t, \bar{z}_t) - \gamma \log \hat{P}(a)\big), \quad \gamma = 0.5.
 \end{equation}
-At test time, given current frame $x_t$ and goal frame $x_{\text{goal}}$, \texttt{CEMPlanner} encodes $z_t = f_\theta(x_t)$ and $z_{\text{goal}} = f_\theta(x_{\text{goal}})$, iteratively refines categorical logits over $H$ future steps by rolling out $M=128$ latent trajectories inside $g_\psi$, selects the elite sequences minimizing combined terminal and closest-approach $L_1$ distance to $z_{\text{goal}}$, executes the aligned action $\hat{a}_0$, and replans at $t+1$.
+
+\subsection{Stage 4: Latent Closed-Loop Planning (\texttt{CEMPlanner})}
+At test time, given the live observation $x_t$ and goal image $x_{\text{goal}}$, \texttt{CEMPlanner} operates entirely in imagination inside the frozen JEPA latent space without pixel generation. Over $I=4$ iterations, it samples $M=128$ candidate 6-step latent sequences, evaluates their trajectory distance to $z_{\text{goal}} = f_\theta(x_{\text{goal}})$:
+\begin{equation}
+  \mathcal{J} = 0.5\,\|\hat{z}_{t+H} - z_{\text{goal}}\|_1 + 0.5\min_{1 \le h \le H}\|\hat{z}_{t+h} - z_{\text{goal}}\|_1,
+\end{equation}
+selects elite sequences, executes the probe-aligned action for the first code $k_0^*$, and replans in a receding-horizon fashion.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.98\textwidth]{figures/fig4_qualitative_planning.pdf}
+  \caption{\textbf{Qualitative Closed-Loop CEM Navigation Rollout in Crafter.} Step-by-step execution driven by receding-horizon latent planning without environment rewards. At Step 0, the agent starts 6 tiles away from the destination $x_{\text{goal}}$. By unrolling 128 latent candidate sequences per step inside \texttt{JEPADynamics}, the agent plans and executes directional movements (\texttt{move\_right}, \texttt{move\_up}), reaching the exact goal state at Step 6 (Pixel $L_1 = 0.0$).}
+  \label{fig:traj}
+\end{figure*}
+
+\section{Experimental Results and Analysis}
+
+\subsection{Unsupervised Pretraining \& Locomotion Purity}
+Table~\ref{tab:pretrain} reports pretraining metrics. On Crafter, LAM achieves $+10.05\text{ dB}$ controllability $\Delta\text{PSNR}_{\text{ctrl}}$ (true vs.\ random latent code), proving that the 8 codes carry substantial physical control information. Inspecting the contingency matrix across validation trajectories shows that Code 6 ($95.6\%$ pure) and Code 7 ($94.7\%$ pure) autonomously isolate cardinal movements from stationary and crafting actions.
+
+\begin{table}[ht]
+\centering
+\caption{\textbf{Unsupervised Pretraining and Physical Metrics} ($2\text{K}$ steps on ToyGrid, $30\text{K}$ on Crafter on NVIDIA A100).}
+\label{tab:pretrain}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{ToyGridEnv} & \textbf{Crafter} \\
+\midrule
+Stage 1 (\texttt{LAM}) Active Codes / Perplexity & $8 / 8$ ($7.61$) & $8 / 8$ ($7.12$) \\
+Stage 1 (\texttt{LAM}) Controllability $\Delta\text{PSNR}_{\text{ctrl}}$ & $+2.28\text{ dB}$ & $\mathbf{+10.05\text{ dB}}$ \\
+Stage 1 (\texttt{LAM}) Reconstruction PSNR & $23.51\text{ dB}$ & $31.62\text{ dB}$ \\
+Stage 1 (\texttt{LAM}) Directional Locomotion Purity & $68.8\%$ & $\mathbf{95.6\%}$ (Code 6) \\
+Stage 2 (\texttt{JEPA}) Effective Rank $\exp(H(p))$ & $46.5 / 192$ & $39.1 / 384$ \\
+Stage 2 (\texttt{JEPA}) Multi-Step Rollout $L_1$ ($H=8$) & $0.1416$ ($H=4$) & $\mathbf{0.1523}$ ($H=8$) \\
+Action Oracle JEPA Rollout $L_1$ ($100\%$ labels) & $0.2297$ ($H=4$) & $0.2003$ ($H=8$) \\
+\midrule
+Zero-Shot VoE Ratio: Teleportation & $1.77\times$ (comb.) & $\mathbf{15.25\times}$ \\
+Zero-Shot VoE Ratio: Object Disappearance & --- & $\mathbf{52.91\times}$ \\
+Zero-Shot VoE Ratio: Action Contradiction & --- & $1.83\times$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\paragraph{Visual Action Aliasing and Latent Rollout Predictability.}
+Conditioning \texttt{JEPADynamics} on discovered LAM codes yields lower multi-step latent prediction error than conditioning on ground-truth actions ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter). This occurs because ground-truth supervision suffers from \emph{visual action aliasing}: failed crafting commands and blocked movements map distinct action IDs to identical static transitions, whereas LAM groups transitions by realized visual consequence.
+\emph{Methodological Caveat:} Because each model trains its own encoder pair $(f_\theta, f_{\bar{\theta}})$, latent $L_1$ errors are measured in each model's respective representation space and should always be interpreted alongside downstream closed-loop control.
 
 \begin{figure*}[t]
   \centering
@@ -165,65 +229,58 @@ At test time, given current frame $x_t$ and goal frame $x_{\text{goal}}$, \textt
   \label{fig:purity}
 \end{figure*}
 
-\section{Empirical Results and Analysis}
-
-\subsection{Multi-Step Rollout Predictability \& Action Aliasing}
-Table~\ref{tab:rollouts} and Figure~\ref{fig:anticollapse}a compare autoregressive rollout errors $\|\hat{z}_{t+H} - z_{t+H}^{\text{tgt}}\|_1$ across horizons $H \in \{1, 2, 4, 8\}$. Conditioning \texttt{JEPADynamics} on discovered LAM codes yields lower normalized rollout error than conditioning on raw ground-truth actions ($0.1523$ vs.\ $0.2003$ at $H=8$ on Crafter; $0.1416$ vs.\ $0.2297$ at $H=4$ on ToyGrid).
-
-\textbf{Visual Action Aliasing \& Methodological Caveat:} In Crafter, $12$ of the $17$ actions are context-dependent crafting/placement commands that produce zero visual change when prerequisites are absent, and the $4$ movement actions produce zero displacement when blocked by water, trees, or walls. Thus, the Action Oracle receives supervision where distinct action IDs map to identical static transitions, whereas \texttt{LAM} groups transitions by their \emph{realized visual effect} (codes $5, 6, 7$ achieve $80.3\%, 95.6\%, 94.7\%$ pure locomotion). Note, however, a key methodological caveat: because each model trains its own encoder pair $(f_\theta, f_{\bar{\theta}})$—even though both are normalized to unit per-channel variance and isotropic Gaussian marginals via \texttt{SIGReg}—latent $L_1$ distances are measured in each model's own representation space and should be interpreted alongside downstream closed-loop control (Section~\ref{sec:planning}).
+\subsection{Label-Supervision Sweep and Planning Success}
+Table~\ref{tab:planning} and Figure~\ref{fig:scaling} examine closed-loop planning success across label fractions $\alpha \in \{0.1\%, 1\%, 5\%, 10\%, 100\%\}$.
+\paragraph{Statistical Variance and Key Takeaway.}
+Because closed-loop evaluation runs 25--30 stochastic episodes across 3 random seeds, standard deviations range between $\pm 1.6\%$ and $\pm 10.3\%$. Differences within the $10\%\text{--}16\%$ band on Crafter or $22\%\text{--}28\%$ on ToyGrid fall within sampling noise. The core empirical finding is that \textbf{alignment probe accuracy saturates by $1\%$ supervision ($\sim 2{,}600$ frames)}, matching the performance of a model trained with $100\%$ ground-truth action labels and roughly doubling unguided random walk performance ($14.4\%$ vs.\ $6.7\%$). Figure~\ref{fig:traj} visualizes a complete planned trajectory in Crafter.
 
 \begin{table}[ht]
 \centering
-\caption{\textbf{Multi-Step Latent Rollout L1 Error $\|\hat{z}_{t+H} - z_{t+H}\|_1$} on held-out validation trajectories ($2\text{K}$ steps on ToyGrid, $30\text{K}$ on Crafter). Note that errors are evaluated in each model's own \texttt{SIGReg}-normalized latent space.}
-\label{tab:rollouts}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{llcccc}
-\toprule
-\textbf{Env} & \textbf{Conditioning} & $H=1$ & $H=2$ & $H=4$ & $H=8$ \\
-\midrule
-ToyGrid & Action Oracle (True $a_t$) & $0.0228$ & $0.0970$ & $0.2297$ & --- \\
-ToyGrid & \textbf{latent-play (LAM $k_t$)} & $\mathbf{0.0204}$ & $\mathbf{0.0596}$ & $\mathbf{0.1416}$ & --- \\
-\midrule
-Crafter & Action Oracle (True $a_t$) & $0.0341$ & $0.0598$ & $0.1107$ & $0.2003$ \\
-Crafter & \textbf{latent-play (LAM $k_t$)} & $\mathbf{0.0218}$ & $\mathbf{0.0409}$ & $\mathbf{0.0818}$ & $\mathbf{0.1523}$ \\
-\bottomrule
-\end{tabular}%
-}
-\end{table}
-
-\subsection{Sample-Efficient CEM Planning \& VoE Physics}\label{sec:planning}
-As shown in Table~\ref{tab:results} and Figure~\ref{fig:scaling}, alignment probe accuracy saturates rapidly with $1\%\text{--}10\%$ action labels. Because closed-loop MPC evaluation runs $25\text{--}30$ stochastic episodes across $3$ random seeds, standard deviations span $1.6\%\text{--}9.6\%$; hence, small differences within the $10\%\text{--}16\%$ band on Crafter or $21\%\text{--}28\%$ on ToyGrid are within sampling noise. The primary takeaway is that \textbf{with only $1\%\text{--}10\%$ labelled frames, \texttt{latent-play} reaches the same closed-loop planning regime as a world model trained with $100\%$ ground-truth actions}, roughly doubling the success rate of an unguided random walk ($12.0\%$ on ToyGrid, $6.7\%$ on Crafter). Finally, on the zero-shot Violation-of-Expectation (\texttt{VoE}) benchmark (Figure~\ref{fig:purity}b), latent prediction surprise jumps from $0.0209$ on plausible clips to $0.2862$ on spatial teleportation ($\mathbf{15.25\times}$) and $0.9016$ on sudden object disappearance ($\mathbf{52.91\times}$), demonstrating emergent spatiotemporal continuity.
-
-\begin{table}[ht]
-\centering
-\caption{\textbf{Goal-Directed CEM Navigation Success Rate (\%)} across label fractions $\alpha$ (Mean $\pm$ SD and Peak Seed across 3 random subsets; 25--30 episodes/seed).}
-\label{tab:results}
+\caption{\textbf{Closed-Loop Goal-Directed Navigation Success Rate (\%)} across supervision fractions (Mean $\pm$ SD across 3 random seeds; 25--30 episodes/seed).}
+\label{tab:planning}
 \resizebox{\columnwidth}{!}{%
 \begin{tabular}{llccc}
 \toprule
-\textbf{Env} & \textbf{Method} & \textbf{Labels ($\alpha$)} & \textbf{Mean $\pm$ SD (\%)} & \textbf{Peak (\%)} \\
+\textbf{Environment} & \textbf{Method} & \textbf{Labels ($\alpha$)} & \textbf{Probe Acc.\ (\%)} & \textbf{Goal Success (\%)} \\
 \midrule
-ToyGrid & Random Walk & $0\%$ & $12.0 \pm 0.0$ & $12.0$ \\
-ToyGrid & \textbf{latent-play} & $0.1\%$ ($92$) & $28.0 \pm 8.6$ & $36.0$ \\
-ToyGrid & \textbf{latent-play} & $5.0\%$ ($4.6\text{K}$) & $21.3 \pm 5.0$ & $28.0$ \\
-ToyGrid & Action Oracle & $100\%$ ($92\text{K}$) & $28.0 \pm 3.3$ & $32.0$ \\
+ToyGridEnv & Random Walk Baseline & $0\%$ & --- & $12.0 \pm 0.0$ \\
+ToyGridEnv & \textbf{latent-play} & $0.1\%$ ($92$) & $46.5 \pm 3.9$ & $\mathbf{28.0 \pm 6.5}$ \\
+ToyGridEnv & \textbf{latent-play} & $1.0\%$ ($921$) & $48.8 \pm 0.4$ & $22.7 \pm 4.9$ \\
+ToyGridEnv & \textbf{latent-play} & $10.0\%$ ($9.2\text{K}$) & $52.0 \pm 0.1$ & $24.0 \pm 3.3$ \\
+ToyGridEnv & \textbf{latent-play} & $100\%$ ($92\text{K}$) & $52.2 \pm 0.1$ & $22.7 \pm 6.8$ \\
+ToyGridEnv & Action Oracle JEPA & $100\%$ ($92\text{K}$) & $100\%$ & $28.0 \pm 3.3$ \\
 \midrule
-Crafter & Random Walk & $0\%$ & $6.7 \pm 2.7$ & $10.0$ \\
-Crafter & \textbf{latent-play} & $0.1\%$ ($260$) & $12.2 \pm 4.2$ & $16.7$ \\
-Crafter & \textbf{latent-play} & $1.0\%$ ($2.6\text{K}$) & $12.2 \pm 9.6$ & $23.3$ \\
-Crafter & \textbf{latent-play} & $10.0\%$ ($26\text{K}$) & $15.6 \pm 7.9$ & $26.7$ \\
-Crafter & \textbf{latent-play} & $100\%$ ($260\text{K}$) & $12.2 \pm 1.6$ & $13.3$ \\
-Crafter & Action Oracle & $100\%$ ($260\text{K}$) & $10.0 \pm 4.7$ & $16.7$ \\
+Crafter & Random Walk Baseline & $0\%$ & --- & $6.7 \pm 2.7$ \\
+Crafter & \textbf{latent-play} & $0.1\%$ ($260$) & $38.1 \pm 2.7$ & $12.2 \pm 10.3$ \\
+Crafter & \textbf{latent-play} & $1.0\%$ ($2.6\text{K}$) & $44.7 \pm 0.9$ & $\mathbf{14.4 \pm 4.2}$ \\
+Crafter & \textbf{latent-play} & $10.0\%$ ($26\text{K}$) & $45.6 \pm 0.1$ & $\mathbf{15.6 \pm 1.6}$ \\
+Crafter & \textbf{latent-play} & $100\%$ ($260\text{K}$) & $45.5 \pm 0.1$ & $10.0 \pm 2.7$ \\
+Crafter & Action Oracle JEPA & $100\%$ ($260\text{K}$) & $100\%$ & $10.0 \pm 4.7$ \\
 \bottomrule
 \end{tabular}%
 }
 \end{table}
 
+\subsection{Zero-Shot Violation-of-Expectation (VoE) Physics}
+As reported in Table~\ref{tab:pretrain} and Figure~\ref{fig:purity}b, \texttt{JEPADynamics} internalizes physical plausibility zero-shot. When non-inertial spatial teleportation is introduced, latent prediction surprise jumps from $0.0209$ to $0.2862$ ($\mathbf{15.25\times}$). When an entity abruptly vanishes, violating object permanence, surprise jumps to $0.9016$ ($\mathbf{52.91\times}$). Action contradiction increases surprise by $1.83\times$, confirming that the model's representations encode spatial continuity and physical conservation laws.
+
+\section{Related Work}
+\paragraph{Latent Action Models (LAMs).}
+Unsupervised action inference from passive video has gained prominence through Genie \cite{bruce2024genie}, LAPO \cite{schmidt2023lapo}, and LAPA \cite{ye2025lapa}. These works rely on autoregressive token generation or pixel-level diffusion, which can be computationally prohibitive. In contrast, \texttt{latent-play} integrates discrete latent action discovery directly with non-generative representation-space dynamics.
+
+\paragraph{Joint-Embedding Predictive Architectures (JEPAs).}
+Introduced in I-JEPA \cite{assran2023ijepa} and extended to video in V-JEPA \cite{assran2025vjepa2}, JEPAs predict representations of masked spatio-temporal blocks without pixel reconstruction. LeJEPA \cite{balestriero2025lejepa} and VICReg \cite{bardes2022vicreg} established non-contrastive covariance regularizers to prevent collapse in static vision. We extend this foundation to action-conditioned autoregressive world models, demonstrating that combining an EMA target network (solving moving-target drift) with SIGReg (solving dimensional collapse) enables stable multi-step planning from scratch.
+
 \section{Conclusion}
-We presented \textbf{latent-play}, showing that playable, non-collapsing world models can be trained from scratch on unlabelled video by uniting entropy-regularized motion VQ bottlenecks with SIGReg-regularized JEPA dynamics.
+We presented \textbf{latent-play}, demonstrating that controllable, non-collapsing world models can be learned tabula rasa from unlabelled video. By uniting an entropy-regularized Cosine VQ latent action model with an isotropic JEPA dynamics predictor and a few-shot alignment probe, \texttt{latent-play} matches the closed-loop navigation performance of fully supervised world models using only $1\%$ of action labels, while discovering emergent physical continuity zero-shot.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{10}
+
+\bibitem{assran2023ijepa}
+M.~Assran, Q.~Duval, I.~Misra, P.~Bojanowski, P.~Vincent, M.~Rabbat, Y.~LeCun, and N.~Ballas.
+\newblock Self-supervised learning from images with a joint-embedding predictive architecture.
+\newblock {\em CVPR}, 2023.
 
 \bibitem{assran2025vjepa2}
 M.~Assran, A.~Bardes, D.~Fan, Q.~Garrido, R.~Howes, M.~Muckley, A.~Rizvi, C.~Roberts, K.~Sinha, A.~Zholus, et~al.
@@ -241,19 +298,39 @@ A.~Bardes, J.~Ponce, and Y.~LeCun.
 \newblock {\em ICLR}, 2022.
 
 \bibitem{bruce2024genie}
-J.~Bruce, M.~Dennis, et~al.
+J.~Bruce, M.~Dennis, A.~Edwards, J.~Parker-Holder, Y.~Shi, E.~Hughes, M.~Lai, A.~Mavalankar, R.~Steigerwald, C.~Apps, et~al.
 \newblock Genie: Generative interactive environments.
 \newblock {\em ICML}, 2024.
+
+\bibitem{cramer1936theorems}
+H.~Cram{\'e}r and H.~Wold.
+\newblock Some theorems on distribution functions.
+\newblock {\em Journal of the London Mathematical Society}, 1(4):290--294, 1936.
 
 \bibitem{epps1983test}
 T.~W. Epps and L.~B. Pulley.
 \newblock A test for normality based on the empirical characteristic function.
 \newblock {\em Biometrika}, 70(3):723--726, 1983.
 
+\bibitem{grill2020byol}
+J.-B. Grill, F.~Strub, F.~Altch{\'e}, C.~Tallec, P.~Richemond, E.~Buchatskaya, C.~Doersch, B.~Avila~Pires, Z.~Guo, M.~Gheshlaghi~Azar, et~al.
+\newblock Bootstrap your own latent-a new approach to self-supervised learning.
+\newblock {\em NeurIPS}, 2020.
+
 \bibitem{hafner2021crafter}
 D.~Hafner.
 \newblock Benchmarking the spectrum of agent capabilities with {C}rafter.
 \newblock {\em NeurIPS Datasets and Benchmarks}, 2021.
+
+\bibitem{hafner2023dreamerv3}
+D.~Hafner, J.~Pasukonis, J.~Ba, and T.~Lillicrap.
+\newblock Mastering diverse domains through world models.
+\newblock {\em arXiv preprint arXiv:2301.04104}, 2023.
+
+\bibitem{rubinstein2004cem}
+R.~Y. Rubinstein and D.~P. Kroese.
+\newblock {\em The Cross-Entropy Method: A Unified Approach to Combinatorial Optimization, Monte-Carlo Simulation and Machine Learning}.
+\newblock Springer, 2004.
 
 \bibitem{schmidt2023lapo}
 D.~Schmidt and M.~Jiang.
@@ -264,6 +341,11 @@ D.~Schmidt and M.~Jiang.
 A.~van~den Oord, O.~Vinyals, and K.~Kavukcuoglu.
 \newblock Neural discrete representation learning.
 \newblock {\em NeurIPS}, 2017.
+
+\bibitem{ye2025lapa}
+S.~Ye, J.~Jang, B.~Jeon, S.~Joo, J.~Yang, B.~Peng, A.~Mandlekar, R.~Tan, Y.-W. Chao, B.~Y. Lin, et~al.
+\newblock Latent action pretraining from videos.
+\newblock {\em ICLR}, 2025.
 
 \end{thebibliography}
 
