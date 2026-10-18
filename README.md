@@ -24,7 +24,7 @@
 
 ---
 
-## 1. How It Works in 30 Seconds
+## 1. How It Works
 
 `latent-play` separates **learning how the world changes** (from 100% unlabelled video) from **learning what the controller buttons are called** (from a tiny labelled subset):
 
