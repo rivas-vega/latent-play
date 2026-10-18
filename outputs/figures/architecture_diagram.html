@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Arquitectura de latent-play — Diagrama Didáctico Interactivo</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .flow-arrow {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+    .pulse-border {
+      box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+    }
+  </style>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+  <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+    <!-- Header & Interactive Tabs -->
+    <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-[var(--border)]">
+      <div>
+        <h2 class="text-base font-bold tracking-tight text-[var(--foreground)]">
+          Arquitectura de <code class="px-1.5 py-0.5 rounded bg-[var(--secondary)] text-xs font-mono">latent-play</code>: Embeddings, Predictor JEPA, SIGReg y Loops de Acción
+        </h2>
+        <p class="text-xs text-[var(--muted-foreground)]">
+          Haz clic en cada pestaña para inspeccionar qué se embebe, cómo fluyen los gradientes, dónde actúa SIGReg y cómo funcionan los loops de decisión.
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-1.5" id="tabs">
+        <button onclick="showTab('tab-jepa')" id="btn-tab-jepa" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white transition">
+          1. Predictor JEPA + SIGReg
+        </button>
+        <button onclick="showTab('tab-embed')" id="btn-tab-embed" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--secondary)] text-[var(--foreground)] hover:opacity-80 transition">
+          2. ¿Qué se Embebe? + LAM
+        </button>
+        <button onclick="showTab('tab-loops')" id="btn-tab-loops" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--secondary)] text-[var(--foreground)] hover:opacity-80 transition">
+          3. Loops de Acción (CEM + MPC)
+        </button>
+        <button onclick="showTab('tab-vars')" id="btn-tab-vars" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--secondary)] text-[var(--foreground)] hover:opacity-80 transition">
+          4. Resumen de Variables (θ, ψ, φ)
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB 1: JEPA PREDICTOR + SIGREG (Default visible because it answers the core question) -->
+    <div id="tab-jepa" class="space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-stretch">
+        <!-- Left column: Inputs & Embeddings -->
+        <div class="md:col-span-4 flex flex-col justify-between gap-2 bg-[var(--background)] border border-[var(--border)] rounded-lg p-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-blue-500">A. Entradas y Codificación Online</div>
+          
+          <div class="p-2 rounded border border-blue-500/40 bg-blue-500/10">
+            <div class="text-xs font-semibold">Frame Actual <code class="font-mono">x_t ∈ [0,1]^(3×64×64)</code></div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-0.5">
+              ↓ <span class="font-semibold text-[var(--foreground)]">PatchEmbed (Conv 8×8, stride 8)</span>: divide la imagen en <strong>64 parches espaciales</strong>.<br/>
+              ↓ <span class="font-semibold text-[var(--foreground)]">Online ViT-S/8 (f_θ)</span>: 4 bloques Transformer.<br/>
+              → Produce latente <code class="font-mono font-bold text-blue-400">z_t ∈ ℝ^(64×192)</code>
+            </div>
+          </div>
+
+          <div class="p-2 rounded border border-amber-500/40 bg-amber-500/10">
+            <div class="text-xs font-semibold">Acción Latente <code class="font-mono">k_t ∈ {0..7}</code> (de LAM congelado)</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-0.5">
+              ↓ <span class="font-semibold text-[var(--foreground)]">Tabla Embedding E_a (8×192)</span>:<br/>
+              → Vector de acción <code class="font-mono font-bold text-amber-400">e(k_t) ∈ ℝ^192</code> sumado a cada token espacial de <code class="font-mono">z_t</code>.
+            </div>
+          </div>
+        </div>
+
+        <!-- Center column: Predictor + SIGReg -->
+        <div class="md:col-span-5 flex flex-col justify-between gap-2 bg-[var(--background)] border border-[var(--border)] rounded-lg p-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-purple-500">B. Dónde se aplica SIGReg y Cómo predice g_ψ</div>
+
+          <!-- SIGReg Box -->
+          <div class="p-2.5 rounded-lg border-2 border-purple-500 bg-purple-500/10 pulse-border">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-purple-400">★ AQUÍ SE APLICA SIGReg + VICReg (sobre z_t)</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-purple-600 text-white font-mono">Anti-Colapso</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">
+              Se toma el promedio espacial <code class="font-mono">z̄_t ∈ ℝ^192</code> del <strong>Online Encoder f_θ</strong> en el batch:
+            </p>
+            <ul class="text-xs list-disc list-inside mt-1 space-y-0.5 text-[var(--foreground)]">
+              <li><strong>SIGReg (λ=0.05):</strong> Proyecta <code class="font-mono">z̄_t</code> en <strong>M=64 direcciones aleatorias 1D</strong> (<code class="font-mono">u^(m) ∈ S^191</code>) y aplica el test de normalidad de <em>Epps-Pulley</em> para forzar <code class="font-mono">z̄_t ~ N(0, I)</code>.</li>
+              <li><strong>VICReg Hinge (λ=0.05):</strong> Fuerza desviación estándar <code class="font-mono">Std(z̄_t) ≥ 1.0</code> en cada dimensión.</li>
+            </ul>
+          </div>
+
+          <!-- Predictor Box -->
+          <div class="p-2.5 rounded-lg border border-emerald-500/50 bg-emerald-500/10">
+            <div class="text-xs font-bold text-emerald-400">Predictor Causal Espaciotemporal <code class="font-mono">g_ψ(z_0..t, e(k_0..t))</code></div>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">
+              2 bloques <code class="font-mono">STBlock</code> (atención espacial sobre los 64 parches + atención causal temporal) predicen el <strong>cambio residual</strong>:
+            </p>
+            <div class="mt-1 text-center font-mono text-xs font-bold py-1 px-2 rounded bg-[var(--card)] border border-[var(--border)]">
+              ẑ_{t+1} = z_t + Δz_t = z_t + g_ψ(z_{0..t}, E_a(k_{0..t}))
+            </div>
+          </div>
+        </div>
+
+        <!-- Right column: Target Encoder & Loss -->
+        <div class="md:col-span-3 flex flex-col justify-between gap-2 bg-[var(--background)] border border-[var(--border)] rounded-lg p-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-rose-500">C. Objetivo y Gradientes</div>
+
+          <div class="p-2 rounded border border-slate-500/40 bg-slate-500/10">
+            <div class="text-xs font-semibold">Frame Futuro <code class="font-mono">x_{t+1}</code></div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-0.5">
+              ↓ <span class="font-semibold text-[var(--foreground)]">Target ViT-S/8 (f_θ̄)</span><br/>
+              → <code class="font-mono font-bold">z_{t+1}^tgt = sg[f_θ̄(x_{t+1})]</code>
+            </div>
+            <div class="mt-1.5 text-xs px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-semibold text-center">
+              ⛔ STOP-GRADIENT (No recibe backprop)
+            </div>
+            <div class="mt-1 text-xs text-[var(--muted-foreground)] text-center font-mono">
+              EMA: θ̄ ← 0.996·θ̄ + 0.004·θ
+            </div>
+          </div>
+
+          <div class="p-2 rounded-lg border-2 border-rose-500/60 bg-rose-500/10">
+            <div class="text-xs font-bold text-rose-400">Loss Total del Mundo (Etapa 2)</div>
+            <div class="text-xs font-mono mt-1 space-y-1">
+              <div>L_pred = ||ẑ_{t+1} - sg[z_{t+1}^tgt]||_1</div>
+              <div>L_total = L_pred + 0.05·L_SIGReg + 0.05·L_var</div>
+            </div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">
+              ✓ Entrena <strong>f_θ</strong>, <strong>E_a</strong> y <strong>g_ψ</strong> simultáneamente.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: WHAT IS EMBEDDED + STAGE 1 LAM -->
+    <div id="tab-embed" class="hidden space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <!-- Box 1: Detailed Embedding explanation -->
+        <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 space-y-2">
+          <div class="text-xs font-bold uppercase tracking-wider text-blue-500">¿Qué se embebe exactamente en el modelo?</div>
+          <div class="space-y-2 text-xs">
+            <div class="p-2 rounded border border-[var(--border)] bg-[var(--card)]">
+              <span class="font-bold text-blue-400">1. Imágenes RGB → 64 Tokens Espaciales (PatchEmbed):</span>
+              <p class="text-[var(--muted-foreground)] mt-0.5">
+                Cada frame <code class="font-mono">x_t ∈ [0,1]^(3×64×64)</code> pasa por una convolución <code class="font-mono">Conv2d(3 → D, kernel=8×8, stride=8×8)</code>. Esto divide la imagen de 64×64 en una cuadrícula de <strong>8×8 = 64 parches</strong> (cada parche cubre 8×8 píxeles) y proyecta cada parche a un vector de dimensión <code class="font-mono">D=192</code>. Se le suma un <strong>embedding posicional aprendible</strong> <code class="font-mono">P_spatial ∈ ℝ^(64×192)</code>.
+              </p>
+            </div>
+            <div class="p-2 rounded border border-[var(--border)] bg-[var(--card)]">
+              <span class="font-bold text-amber-400">2. Acciones Discretas → Vector de Condicionamiento (Action Embed E_a):</span>
+              <p class="text-[var(--muted-foreground)] mt-0.5">
+                El índice discreto <code class="font-mono">k_t ∈ {0,1,..,7}</code> descubierto por el LAM se busca en una tabla <code class="font-mono">nn.Embedding(8, 192)</code>, obteniendo un vector <code class="font-mono">e(k_t) ∈ ℝ^192</code>. En el predictor JEPA, este vector se suma (broadcast) a los 64 tokens espaciales del frame <code class="font-mono">t</code>: <code class="font-mono">h_t[p] = z_t[p] + e(k_t)</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Box 2: Stage 1 LAM Architecture -->
+        <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 space-y-2">
+          <div class="text-xs font-bold uppercase tracking-wider text-amber-500">Etapa 1: Cómo descubre acciones el LAM (Sin Etiquetas)</div>
+          <div class="text-xs space-y-1.5">
+            <div class="p-2 rounded border border-amber-500/40 bg-amber-500/10">
+              <strong>1. Codificador Inverso (IDM):</strong> Toma la secuencia <code class="font-mono">x_{0..T-1}</code>, aplica <code class="font-mono">PatchEmbed</code> + 3 bloques <code class="font-mono">STBlock</code> → obtiene <code class="font-mono">h_t</code>. Calcula la diferencia temporal <code class="font-mono">Δh_t = h_{t+1} - h_t</code> y aplica un <em>Spatial Attention Pool</em> sobre los 64 parches para concentrarse en lo que se movió → vector continuo <code class="font-mono">u_t ∈ ℝ^16</code>.
+            </div>
+            <div class="p-2 rounded border border-purple-500/40 bg-purple-500/10">
+              <strong>2. Cuantización Vectorial Coseno (Cosine VQ, K=8):</strong> Normaliza en esfera unitaria (<code class="font-mono">L2-norm</code>) y asigna el código más cercano <code class="font-mono">k_t = argmin_k ||û_t - ĉ_k||_2</code>. Incluye <strong>regularización de entropía de batch</strong> para usar los 8 códigos uniformemente (<code class="font-mono">8/8 activos</code>).
+            </div>
+            <div class="p-2 rounded border border-emerald-500/40 bg-emerald-500/10">
+              <strong>3. Decodificador Forward (FDM):</strong> Toma únicamente el frame actual <code class="font-mono">x_t</code> + el código cuantizado <code class="font-mono">z_q(k_t)</code> y predice el cambio de píxeles <code class="font-mono">x̂_{t+1} = x_t + Δx̂_t</code> ponderando por movimiento (<code class="font-mono">w = 1 + 5|x_{t+1} - x_t|</code>).
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: ACTION & PLANNING LOOPS (CEM INNER LOOP vs MPC OUTER LOOP) -->
+    <div id="tab-loops" class="hidden space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-stretch">
+        <!-- Outer Physical Loop -->
+        <div class="md:col-span-5 bg-[var(--background)] border border-blue-500/50 rounded-lg p-3 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-blue-400">Loop Externo (Físico / MPC en el Juego)</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">1 paso por frame t</span>
+            </div>
+            <ol class="text-xs space-y-2 mt-2 list-decimal list-inside text-[var(--foreground)]">
+              <li>
+                <strong>Observación actual y Meta:</strong> El agente recibe el frame actual <code class="font-mono">x_t</code> y tiene la imagen destino <code class="font-mono">x_goal</code>.
+              </li>
+              <li>
+                <strong>Codificación al espacio JEPA:</strong> Ambos se codifican con <code class="font-mono">f_θ</code>:
+                <div class="font-mono text-xs bg-[var(--card)] p-1 rounded mt-0.5 text-center">z_t = f_θ(x_t),   z_goal = f_θ(x_goal)</div>
+              </li>
+              <li>
+                <strong>Llamada al Loop Mental (CEM):</strong> El planificador mental devuelve el mejor primer código latente <code class="font-mono font-bold text-amber-400">k_0* ∈ {0..7}</code>.
+              </li>
+              <li>
+                <strong>Traducción a Acción Real (ActionAlignment φ):</strong> El MLP ligero traduce <code class="font-mono">(k_0*, z̄_t)</code> al botón real del juego corrigiendo el sesgo de frecuencia:
+                <div class="font-mono text-xs bg-[var(--card)] p-1 rounded mt-0.5 text-center">â_t = argmax_a [ log P_φ(a | k_0*, z̄_t) - 0.5·log P(a) ]</div>
+              </li>
+              <li>
+                <strong>Ejecución y Realimentación:</strong> Se ejecuta <code class="font-mono">â_t</code> en Crafter, el entorno devuelve <code class="font-mono">x_{t+1}</code> y el ciclo se repite.
+              </li>
+            </ol>
+          </div>
+        </div>
+
+        <!-- Inner Mental CEM Loop -->
+        <div class="md:col-span-7 bg-[var(--background)] border-2 border-emerald-500/60 rounded-lg p-3 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-emerald-400">Loop Interno Mental: Planificación CEM en Espacio Latente</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-600 text-white font-mono">4 iteraciones × 128 futuros</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">
+              Ocurre <strong>100% dentro de la cabeza del agente</strong> (sin tocar el simulador del juego ni reconstruir píxeles):
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 text-xs">
+              <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)]">
+                <div class="font-bold text-emerald-400">Paso 1: Muestrear 128 Planes</div>
+                <p class="text-[var(--muted-foreground)] mt-0.5">
+                  De una distribución categórica <code class="font-mono">P^(i) ∈ Δ^8</code> para cada paso del horizonte <code class="font-mono">H=6</code>, muestrea <strong>M=128 secuencias candidatas</strong> de códigos latentes: <code class="font-mono">k^(m) = (k_0, k_1, ..., k_5) ∈ {0..7}^6</code>.
+                </p>
+              </div>
+              <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)]">
+                <div class="font-bold text-emerald-400">Paso 2: Imaginar Rollout en JEPA</div>
+                <p class="text-[var(--muted-foreground)] mt-0.5">
+                  Para los 128 planes en paralelo (en GPU), el predictor <code class="font-mono">g_ψ</code> encadena 6 pasos hacia el futuro partiendo de <code class="font-mono">ẑ_0 = z_t</code>:<br/>
+                  <code class="font-mono">ẑ_{h+1}^(m) = ẑ_h^(m) + g_ψ(ẑ_{0..h}^(m), E_a(k_{0..h}^(m)))</code>
+                </p>
+              </div>
+              <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)]">
+                <div class="font-bold text-emerald-400">Paso 3: Evaluar Coste a la Meta</div>
+                <p class="text-[var(--muted-foreground)] mt-0.5">
+                  Compara el estado final imaginado <code class="font-mono">ẑ_6^(m)</code> contra el estado meta <code class="font-mono">z_goal</code> usando distancia L1 en el espacio latente:<br/>
+                  <code class="font-mono">Coste^(m) = ||ẑ_6^(m) - z_goal||_1</code>
+                </p>
+              </div>
+              <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)]">
+                <div class="font-bold text-emerald-400">Paso 4: Refinar Élites (Top-16)</div>
+                <p class="text-[var(--muted-foreground)] mt-0.5">
+                  Selecciona los <strong>E=16 planes con menor coste</strong>, actualiza las probabilidades <code class="font-mono">P^(i+1)</code> hacia esos élites, y tras <strong>I=4 iteraciones</strong> entrega <code class="font-mono font-bold text-amber-400">k_0* = argmax P_0^(4)</code> al Loop Externo.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: SUMMARY TABLE OF LEARNABLE PARAMETERS -->
+    <div id="tab-vars" class="hidden">
+      <div class="overflow-x-auto bg-[var(--background)] border border-[var(--border)] rounded-lg">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-[var(--border)] bg-[var(--secondary)]">
+              <th class="p-2 font-bold">Etapa / Módulo</th>
+              <th class="p-2 font-bold">Variables que se Aprenden</th>
+              <th class="p-2 font-bold">Qué está Congelado</th>
+              <th class="p-2 font-bold">Datos Usados</th>
+              <th class="p-2 font-bold">Función de Pérdida (Objetivo)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--border)]">
+            <tr>
+              <td class="p-2 font-semibold text-amber-400">Etapa 1: LAM</td>
+              <td class="p-2 font-mono">Enc_IDM, Codebook C (8×16), Dec_FDM (1.68M params)</td>
+              <td class="p-2 text-[var(--muted-foreground)]">Nada (entrena desde cero)</td>
+              <td class="p-2">100% Vídeo sin etiquetas <code class="font-mono">(x_t, x_{t+1})</code></td>
+              <td class="p-2 font-mono">L_MSE_mov + L_VQ + 0.1·L_entropía</td>
+            </tr>
+            <tr>
+              <td class="p-2 font-semibold text-blue-400">Etapa 2: JEPA + SIGReg</td>
+              <td class="p-2 font-mono">Online ViT f_θ, Action Embed E_a, Predictor g_ψ (10.3M)</td>
+              <td class="p-2 text-[var(--muted-foreground)]">LAM congelado; Target ViT <code class="font-mono">f_θ̄</code> vía EMA (<code class="font-mono">τ=0.996</code>)</td>
+              <td class="p-2">100% Vídeo + códigos <code class="font-mono">k_t</code> del LAM</td>
+              <td class="p-2 font-mono">||ẑ_{t+1} - sg[z_{t+1}^tgt]||_1 + 0.05·SIGReg + 0.05·Var</td>
+            </tr>
+            <tr>
+              <td class="p-2 font-semibold text-purple-400">Etapa 3: Alineamiento</td>
+              <td class="p-2 font-mono">Probe MLP 2 capas φ (~27K params)</td>
+              <td class="p-2 text-[var(--muted-foreground)]">LAM y JEPA completamente congelados</td>
+              <td class="p-2">Solo 0.1%–10% pares <code class="font-mono">(x_t, a_real)</code></td>
+              <td class="p-2 font-mono">CrossEntropy(P_φ(a | k_t, z̄_t), a_real)</td>
+            </tr>
+            <tr>
+              <td class="p-2 font-semibold text-emerald-400">Etapa 4: CEM + MPC</td>
+              <td class="p-2 font-mono">Distribución del plan P ∈ ℝ^(6×8) (en test)</td>
+              <td class="p-2 text-[var(--muted-foreground)]">Todos los pesos neuronales congelados</td>
+              <td class="p-2">Frame actual <code class="font-mono">x_t</code> y meta <code class="font-mono">x_goal</code></td>
+              <td class="p-2 font-mono">min_{k_0..5} ||ẑ_{t+6} - z_goal||_1</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function showTab(tabId) {
+      const tabs = ['tab-jepa', 'tab-embed', 'tab-loops', 'tab-vars'];
+      tabs.forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+        const btn = document.getElementById('btn-' + id);
+        btn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--secondary)] text-[var(--foreground)] hover:opacity-80 transition';
+      });
+      document.getElementById(tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById('btn-' + tabId);
+      activeBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white transition';
+    }
+  </script>
+</body>
+</html>

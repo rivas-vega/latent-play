@@ -94,7 +94,14 @@ We collect two datasets stored as memory-mapped \texttt{uint8} shards (\texttt{n
 \end{figure*}
 
 \section{Didactic Methodology: Step-by-Step}
-Table~\ref{tab:master} summarizes the inputs, outputs, learnable parameters, and objectives of each stage. Below we detail the mathematical mechanics of each module.
+Figure~\ref{fig:arch} illustrates the complete end-to-end architecture—showing what is embedded, how the causal predictor $g_\psi$ is trained, exactly where \textbf{SIGReg} acts on the online encoder representations $z_t$, and how the inner mental CEM loop interacts with the outer physical MPC loop—while Table~\ref{tab:master} summarizes all inputs, outputs, learnable parameters, and objectives.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.98\textwidth]{figures/fig0_architecture.pdf}
+  \caption{\textbf{Complete \texttt{latent-play} Architecture.} \textbf{Top (Stage 1):} Unsupervised Latent Action Model (\texttt{LAM}) embeds $64\times 64$ frames into $64$ spatial patches ($8\times 8$), computes temporal motion differences $\Delta h_t = h_{t+1} - h_t$, quantizes them into $K=8$ discrete codes via a Cosine VQ bottleneck with batch-entropy regularization, and reconstructs $\hat{x}_{t+1}$ with motion-weighted MSE. \textbf{Middle (Stage 2):} The Online \texttt{ViT-S/8} encoder $f_\theta$ maps $x_t$ to $z_t \in \mathbb{R}^{64\times D}$, where \textbf{SIGReg} ($M=64$ random 1D projections + Epps-Pulley test) and a VICReg variance hinge act directly on $z_t$ to prevent collapse; the causal predictor $g_\psi$ combines $z_t$ with embedded latent actions $e(k_t)$ to predict $\hat{z}_{t+1}$, trained via $L_1$ loss against the stop-gradient EMA target encoder $f_{\bar{\theta}}(x_{t+1})$. \textbf{Bottom (Stages 3 \& 4):} At test time, an \textbf{inner mental CEM loop} unrolls $128$ candidate 6-step trajectories inside $g_\psi$ to pick the optimal first latent code $k_0^*$, while the \textbf{outer physical MPC loop} translates $k_0^*$ into a real game action $\hat{a}_t$ via the few-shot \texttt{ActionAlignment} probe $P_\phi$.}
+  \label{fig:arch}
+\end{figure*}
 
 \subsection{Stage 1: Unsupervised Latent Action Model (LAM)}
 \paragraph{Inputs and Tokenization.}

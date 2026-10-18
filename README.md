@@ -37,7 +37,11 @@ At the same time, world models that predict future frames in **pixel space** (li
 
 ## 2. Master Summary Table: Models, Inputs, Learnable Variables, and Objectives
 
-The pipeline is divided into **three sequential training stages** plus **closed-loop test-time planning**:
+The pipeline is divided into **three sequential training stages** plus **closed-loop test-time planning** (see the full visual architecture diagram below, or open the interactive HTML diagram [`outputs/figures/architecture_diagram.html`](outputs/figures/architecture_diagram.html)):
+
+<p align="center">
+  <img src="outputs/figures/fig0_architecture.png" width="100%" alt="latent-play Complete 4-Stage Architecture Diagram"/>
+</p>
 
 ```mermaid
 flowchart LR
