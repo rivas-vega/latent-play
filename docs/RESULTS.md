@@ -85,7 +85,11 @@ To evaluate how many real action labels are needed to turn the unsupervised worl
 
 ## 4. Physical Violation-of-Expectation (VoE) Surprise Scoring
 
-Following the zero-shot physical plausibility protocol of `V-JEPA 2`, we evaluate whether the unsupervised `JEPADynamics` world model assigns higher latent prediction error $\|\hat{z}_{t+1} - z_{t+1}^{\text{tgt}}\|_1$ to trajectories containing an injected physical violation (teleportation, frozen frame, or reversed dynamics at step $t=4$) than to natural trajectories (`outputs/voe_metrics.json`):
-- **Mean Natural Trajectory Surprise:** `0.0251`
-- **Mean Corrupted Trajectory Surprise (at fault step):** `0.0445` (**`1.77×`** surprise ratio)
-- **Zero-Shot Anomaly Detection AUROC:** **`0.8712`**
+Following the zero-shot physical plausibility protocol of `V-JEPA 2`, we evaluate whether the unsupervised `JEPADynamics` world model assigns higher latent prediction error $\mathcal{S}_t = \|\hat{z}_{t+1} - z_{t+1}^{\text{tgt}}\|_1$ to trajectories containing an injected physical violation than to natural plausible trajectories ([`outputs/voe_metrics.json`](../outputs/voe_metrics.json)):
+
+| Environment & Violation Type | Plausible Surprise $\mathcal{S}_{\text{plausible}}$ | Violated Surprise $\mathcal{S}_{\text{violated}}$ | Surprise Ratio $R = \mathcal{S}_{\text{violated}} / \mathcal{S}_{\text{plausible}}$ |
+|---|---:|---:|---:|
+| **`Crafter` — Spatial Teleportation** (sudden frame jump) | `0.0209` | `0.2862` | **`15.25×`** |
+| **`Crafter` — Object Disappearance** (entity patched out) | `0.0209` | `0.9016` | **`52.91×`** |
+| **`Crafter` — Action Contradiction** (opposing latent code) | `0.0209` | `0.0397` | **`1.83×`** |
+| **`ToyGridEnv` — Combined Physical Violations** (AUROC `0.8712`) | `0.0251` | `0.0445` | **`1.77×`** |
