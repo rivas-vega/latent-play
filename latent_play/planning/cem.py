@@ -29,6 +29,8 @@ class CEMPlanner:
         temperature: float = 1.0,
         alignment: ActionAlignment | None = None,
         prior_correction: float = 0.5,
+        stagnation_penalty: float = 0.0,
+        stagnation_threshold: float = 0.01,
     ) -> None:
         self.dynamics = dynamics.eval()
         self.horizon = horizon
@@ -38,6 +40,8 @@ class CEMPlanner:
         self.temperature = temperature
         self.alignment = alignment
         self.prior_correction = prior_correction
+        self.stagnation_penalty = stagnation_penalty
+        self.stagnation_threshold = stagnation_threshold
         self.num_actions = dynamics.cfg.num_actions
 
     @torch.no_grad()
@@ -91,6 +95,12 @@ class CEMPlanner:
             min_dist = step_dists.min(dim=1).values
             final_dist = (z_final.float() - z_goal.float()).abs().flatten(1).mean(dim=1)
             costs = 0.5 * final_dist + 0.5 * min_dist
+
+            # Stagnation penalty: penalize plans that get stuck against obstacles or produce near-zero displacement
+            if self.stagnation_penalty > 0.0 and traj.shape[1] > 1:
+                displacement = (traj[:, 1:].float() - traj[:, :-1].float()).abs().flatten(2).mean(dim=2)  # [M, H-1]
+                stuck = (displacement < self.stagnation_threshold).float().mean(dim=1)
+                costs = costs + self.stagnation_penalty * stuck
 
             # Find elites (lowest cost)
             elite_idx = costs.argsort()[: self.num_elites]

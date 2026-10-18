@@ -93,3 +93,25 @@ def test_cem_planner_with_context_alignment():
     assert 0 <= action < 5
     assert seq.shape == (4,)
 
+
+def test_cem_planner_with_stagnation_penalty():
+    torch.manual_seed(0)
+    dynamics = JEPADynamics(TINY_DYN).eval()
+    planner = CEMPlanner(
+        dynamics=dynamics,
+        horizon=4,
+        num_samples=16,
+        num_elites=4,
+        iterations=2,
+        stagnation_penalty=0.5,
+        stagnation_threshold=0.01,
+    )
+
+    z_curr = torch.randn(1, 16, 32)
+    z_goal = torch.randn(1, 16, 32)
+
+    action, seq = planner.plan(z_curr, z_goal)
+    assert 0 <= action < 5
+    assert seq.shape == (4,)
+
+
