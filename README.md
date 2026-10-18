@@ -35,20 +35,20 @@
 flowchart TB
     subgraph TRAIN["TRAINING PIPELINE (Stages 1–3)"]
         direction LR
-        V[("Unlabelled Video\n(x_t, x_{t+1})")] --> LAM["Stage 1: LAM\nIDM + Cosine VQ (K=8) + FDM"]
-        LAM -- "inferred code k_t ∈ {0..7}" --> JEPA["Stage 2: JEPADynamics\nOnline ViT-S/8 + Causal Predictor\n+ EMA Target + SIGReg"]
+        V[("Unlabelled Video<br/>(x_t, x_{t+1})")] --> LAM["Stage 1: LAM<br/>IDM + Cosine VQ (K=8) + FDM"]
+        LAM -- "inferred code k_t ∈ {0..7}" --> JEPA["Stage 2: JEPADynamics<br/>Online ViT-S/8 + Causal Predictor<br/>+ EMA Target + SIGReg"]
         V --> JEPA
-        LAB[("0.1% – 10% Labelled Pairs\n(x_t, a_real)")] --> AL["Stage 3: ActionAlignment\n2-Layer MLP: (k_t, z̄_t) → a_real"]
+        LAB[("0.1% – 10% Labelled Pairs<br/>(x_t, a_real)")] --> AL["Stage 3: ActionAlignment<br/>2-Layer MLP: (k_t, z̄_t) → a_real"]
         LAM -- "k_t" --> AL
         JEPA -- "scene context z̄_t" --> AL
     end
 
     subgraph TEST["TEST-TIME INFERENCE (Stage 4 — All Weights Frozen, LAM Not Used)"]
         direction LR
-        X["Live Frame x_t\n+ Goal Image x_goal"] --> ENC["Frozen ViT-S/8 Encoder\n→ z_t, z_goal"]
-        ENC --> CEM["Stage 4: CEM Planner\n128 rollouts × H=6 steps\nover latent codes k ∈ {0..7}^6"]
-        CEM -- "best first code k_0*" --> AL2["Frozen ActionAlignment\n+ Log-Prior Correction"]
-        AL2 -- "real action â_t" --> ENV["Game Environment\n(Crafter / ToyGrid)"]
+        X["Live Frame x_t<br/>+ Goal Image x_goal"] --> ENC["Frozen ViT-S/8 Encoder<br/>→ z_t, z_goal"]
+        ENC --> CEM["Stage 4: CEM Planner<br/>128 rollouts × H=6 steps<br/>over latent codes k ∈ {0..7}^6"]
+        CEM -- "best first code k_0*" --> AL2["Frozen ActionAlignment<br/>+ Log-Prior Correction"]
+        AL2 -- "real action â_t" --> ENV["Game Environment<br/>(Crafter / ToyGrid)"]
         ENV -- "next frame x_{t+1}" --> X
     end
 
