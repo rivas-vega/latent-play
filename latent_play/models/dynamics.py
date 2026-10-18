@@ -154,7 +154,6 @@ class JEPADynamics(nn.Module):
         """
         return self.forward(z_seq, actions)[:, -1]
 
-    @torch.no_grad()
     def rollout(
         self,
         z_init: torch.Tensor,
@@ -169,8 +168,12 @@ class JEPADynamics(nn.Module):
         Returns:
             rollout_z: [B, H, ...] predicted latent trajectories
         """
-        if z_init.ndim == 3:  # [B, N, D] or [B, D] without temporal dim -> add T=1
-            z_init = z_init.unsqueeze(1)
+        if self.cfg.pool_tokens:
+            if z_init.ndim == 2:  # [B, D]
+                z_init = z_init.unsqueeze(1)
+        else:
+            if z_init.ndim == 3:  # [B, N, D]
+                z_init = z_init.unsqueeze(1)
         B, T_init = z_init.shape[:2]
         H = actions.shape[1]
 

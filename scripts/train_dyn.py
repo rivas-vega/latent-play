@@ -130,7 +130,9 @@ def evaluate_rollouts(
 
         with autocast_ctx(device, amp):
             # Target representations computed with EMA target encoder
-            z_target = ema.target(raw_frames)  # [B, T, N, D]
+            z_target = ema.target(raw_frames)
+            if model.cfg.pool_tokens:
+                z_target = z_target.mean(dim=2)  # [B, T, D]
             # Online representations
             z_online = model.encode(raw_frames)
 
@@ -303,7 +305,9 @@ def main() -> None:
         with autocast_ctx(device, tc["amp"]):
             # Target representation computed with EMA target encoder
             with torch.no_grad():
-                target_z = ema.target(raw_frames[:, 1:])  # [B, T-1, N, D]
+                target_z = ema.target(raw_frames[:, 1:])
+                if mcfg.pool_tokens:
+                    target_z = target_z.mean(dim=2)  # [B, T-1, D]
 
             # Online representation for context
             online_z = model.encode(raw_frames[:, :-1])  # [B, T-1, N, D]

@@ -106,3 +106,44 @@ def test_jepa_dynamics_film_modulation():
     loss.backward()
     assert model.action_film[-1].weight.grad is not None
 
+
+def test_jepa_dynamics_pooled_tokens_and_loss():
+    from latent_play.losses import jepa_loss
+    from latent_play.utils import EMA
+
+    torch.manual_seed(0)
+    cfg_pool = DynamicsConfig(
+        image_size=32,
+        patch=8,
+        dim=32,
+        enc_depth=1,
+        enc_heads=2,
+        pred_depth=1,
+        pred_heads=2,
+        num_actions=5,
+        max_context=8,
+        pool_tokens=True,
+        action_modulation="film",
+    )
+    model = JEPADynamics(cfg_pool)
+    ema = EMA(model.encoder, total_steps=100)
+    frames = torch.rand(2, 3, 3, 32, 32) * 2 - 1
+    actions = torch.randint(0, 5, (2, 2))
+
+    online_z = model.encode(frames[:, :-1])  # [2, 2, 32]
+    assert online_z.shape == (2, 2, 32)
+    pred_z = model(online_z, actions)  # [2, 2, 32]
+    assert pred_z.shape == (2, 2, 32)
+
+    target_z = ema.target(frames[:, 1:])  # [2, 2, 16, 32]
+    if cfg_pool.pool_tokens:
+        target_z = target_z.mean(dim=2)  # [2, 2, 32]
+    assert target_z.shape == (2, 2, 32)
+
+    loss_dict = jepa_loss(pred_z, target_z, online_z=online_z, sigreg_weight=0.05)
+    assert "loss" in loss_dict
+    assert not torch.isnan(loss_dict["loss"])
+    loss_dict["loss"].backward()
+    assert model.pred_head.weight.grad is not None
+
+
