@@ -61,10 +61,17 @@ class CEMPlanner:
             best_sequence: [H] tensor of planned action sequence
         """
         device = z_curr.device
-        if z_curr.ndim == 3:  # [N, D] -> [1, N, D]
-            z_curr = z_curr.unsqueeze(0)
-        if z_goal.ndim == 3:
-            z_goal = z_goal.unsqueeze(0)
+        pool_tokens = getattr(self.dynamics.cfg, "pool_tokens", False)
+        if pool_tokens:
+            if z_curr.ndim == 1:
+                z_curr = z_curr.unsqueeze(0)  # [1, D]
+            if z_goal.ndim == 1:
+                z_goal = z_goal.unsqueeze(0)  # [1, D]
+        else:
+            if z_curr.ndim == 2:
+                z_curr = z_curr.unsqueeze(0)  # [1, N, D]
+            if z_goal.ndim == 2:
+                z_goal = z_goal.unsqueeze(0)  # [1, N, D]
 
         H = self.horizon
         M = self.num_samples
@@ -74,7 +81,8 @@ class CEMPlanner:
         logits = torch.zeros(H, A, device=device)
 
         # Expand z_curr for parallel rollout: [M, 1, ...]
-        z_init = z_curr.repeat(M, 1, 1, 1) if z_curr.ndim == 4 else z_curr.repeat(M, 1, 1)
+        z_init = z_curr.repeat(M, *([1] * (z_curr.ndim - 1)))
+        z_goal_target = z_goal.squeeze(0)  # [D] or [N, D]
 
         best_seq = None
         best_cost = float("inf")
@@ -87,19 +95,19 @@ class CEMPlanner:
 
             # Autoregressive rollout in latent space: [M, H, ...]
             traj = self.dynamics.rollout(z_init, actions)
-            z_final = traj[:, -1]  # [M, ...]
 
             # Cost: combination of terminal distance and closest approach along the horizon
             # This ensures goals closer than H steps are reached immediately without overshooting.
-            step_dists = (traj.float() - z_goal.unsqueeze(1).float()).abs().flatten(2).mean(dim=2)  # [M, H]
-            min_dist = step_dists.min(dim=1).values
-            final_dist = (z_final.float() - z_goal.float()).abs().flatten(1).mean(dim=1)
+            diff = traj.float() - z_goal_target.float()
+            step_dists = diff.abs().reshape(M, H, -1).mean(dim=-1)  # [M, H]
+            min_dist = step_dists.min(dim=1).values  # [M]
+            final_dist = step_dists[:, -1]  # [M]
             costs = 0.5 * final_dist + 0.5 * min_dist
 
             # Stagnation penalty: penalize plans that get stuck against obstacles or produce near-zero displacement
             if self.stagnation_penalty > 0.0 and traj.shape[1] > 1:
-                displacement = (traj[:, 1:].float() - traj[:, :-1].float()).abs().flatten(2).mean(dim=2)  # [M, H-1]
-                stuck = (displacement < self.stagnation_threshold).float().mean(dim=1)
+                displacement = (traj[:, 1:].float() - traj[:, :-1].float()).abs().reshape(M, H - 1, -1).mean(dim=-1)  # [M, H-1]
+                stuck = (displacement < self.stagnation_threshold).float().mean(dim=1)  # [M]
                 costs = costs + self.stagnation_penalty * stuck
 
             # Find elites (lowest cost)

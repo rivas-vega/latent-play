@@ -115,3 +115,34 @@ def test_cem_planner_with_stagnation_penalty():
     assert seq.shape == (4,)
 
 
+def test_cem_planner_pooled():
+    torch.manual_seed(0)
+    cfg = DynamicsConfig(
+        image_size=32,
+        patch=8,
+        dim=32,
+        enc_depth=1,
+        enc_heads=2,
+        pred_depth=1,
+        pred_heads=2,
+        num_actions=5,
+        max_context=8,
+        pool_tokens=True,
+    )
+    dynamics = JEPADynamics(cfg).eval()
+    planner = CEMPlanner(
+        dynamics=dynamics,
+        horizon=4,
+        num_samples=16,
+        num_elites=4,
+        iterations=2,
+    )
+
+    z_curr = torch.randn(1, 32)
+    z_goal = torch.randn(1, 32)
+
+    action, seq = planner.plan(z_curr, z_goal)
+    assert 0 <= action < 5
+    assert seq.shape == (4,)
+
+

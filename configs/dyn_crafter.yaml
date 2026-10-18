@@ -11,7 +11,7 @@ model:
   pred_heads: 6
   num_actions: 17
   max_context: 16
-  pool_tokens: true
+  pool_tokens: false
   action_modulation: film
 train:
   batch_size: 64

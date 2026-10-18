@@ -105,6 +105,7 @@ def _sample_grid(*rows: torch.Tensor) -> np.ndarray:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
+    ap.add_argument("--force", action="store_true", help="Force training from step 0 by discarding existing checkpoints")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
     cfg = load_config(args.config, args.overrides)
@@ -135,7 +136,11 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
     step = 0
-    if (ck := latest_checkpoint(out)) is not None:
+    if args.force:
+        print(f"--force specified: discarding checkpoints in {out} and training from step 0.")
+        for old_pt in out.glob("*.pt"):
+            old_pt.unlink(missing_ok=True)
+    elif (ck := latest_checkpoint(out)) is not None:
         state = load_checkpoint(ck, device)
         try:
             model.load_state_dict(state["model"])
@@ -143,6 +148,8 @@ def main() -> None:
             scaler.load_state_dict(state["scaler"])
             step = state["step"]
             print(f"resumed from {ck} at step {step}")
+            if step >= tc["steps"]:
+                print(f"Training already completed at step {step} >= {tc['steps']}. Pass --force to retrain from scratch.")
         except RuntimeError as e:
             print(f"Discarding incompatible checkpoint {ck} ({e}); starting fresh from step 0.")
             for old_pt in out.glob("*.pt"):

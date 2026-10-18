@@ -50,7 +50,7 @@ def precompute_dataset_features(
     all_z = []
 
     for batch in loader:
-        target_actions = batch["action"] if "action" in batch else batch["action_true"]
+        target_actions = batch["action_true"] if "action_true" in batch else batch["action"]
         if only_valid_labels:
             valid = target_actions >= 0
             if not valid.any():
@@ -180,6 +180,10 @@ def main() -> None:
     ap.add_argument("--out-dir", default="outputs/sweep_results")
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     ap.add_argument("--use-state-context", action="store_true", default=False, help="Condition alignment probe on visual state context")
+    ap.add_argument("--cem-samples", type=int, default=128, help="Number of candidate action sequences sampled per CEM iteration")
+    ap.add_argument("--cem-elites", type=int, default=16, help="Number of top elite sequences selected per CEM iteration")
+    ap.add_argument("--cem-iters", type=int, default=4, help="Number of CEM optimization iterations")
+    ap.add_argument("--cem-horizon", type=int, default=6, help="Planning horizon in steps")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -210,7 +214,13 @@ def main() -> None:
         ora_cfg = DynamicsConfig(**ora_data["model_cfg"])
         ora_model = JEPADynamics(ora_cfg).to(device).eval()
         ora_model.load_state_dict(ora_data["model"])
-        ora_planner = CEMPlanner(dynamics=ora_model, horizon=6, num_samples=64, num_elites=8, iterations=3)
+        ora_planner = CEMPlanner(
+            dynamics=ora_model,
+            horizon=args.cem_horizon,
+            num_samples=args.cem_samples,
+            num_elites=args.cem_elites,
+            iterations=args.cem_iters,
+        )
         env = make_env(env_name, seed=100)
         ora_sr = np.mean(
             [
@@ -312,10 +322,10 @@ def main() -> None:
                 if dyn_model is not None:
                     planner = CEMPlanner(
                         dynamics=dyn_model,
-                        horizon=6,
-                        num_samples=64,
-                        num_elites=8,
-                        iterations=3,
+                        horizon=args.cem_horizon,
+                        num_samples=args.cem_samples,
+                        num_elites=args.cem_elites,
+                        iterations=args.cem_iters,
                         alignment=align,
                     )
                     env = make_env(env_name, seed=seed + 100)

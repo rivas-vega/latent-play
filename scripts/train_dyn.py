@@ -175,6 +175,7 @@ def evaluate_rollouts(
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
+    ap.add_argument("--force", action="store_true", help="Force training from step 0 by discarding existing checkpoints")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
 
@@ -249,7 +250,11 @@ def main() -> None:
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
 
     step = 0
-    if (ck := latest_checkpoint(out)) is not None:
+    if args.force:
+        print(f"--force specified: discarding checkpoints in {out} and training from step 0.")
+        for old_pt in out.glob("*.pt"):
+            old_pt.unlink(missing_ok=True)
+    elif (ck := latest_checkpoint(out)) is not None:
         lam_newer = bool(
             cfg.get("lam_checkpoint")
             and Path(cfg["lam_checkpoint"]).exists()
@@ -273,6 +278,8 @@ def main() -> None:
                     dec_opt.load_state_dict(state["dec_opt"])
                 step = state["step"]
                 print(f"resumed from {ck} at step {step}")
+                if step >= tc["steps"]:
+                    print(f"Training already completed at step {step} >= {tc['steps']}. Pass --force to retrain from scratch.")
             except RuntimeError as e:
                 print(f"Discarding incompatible checkpoint {ck} ({e}); starting fresh from step 0.")
                 for old_pt in out.glob("*.pt"):
