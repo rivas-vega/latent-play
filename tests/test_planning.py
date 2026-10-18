@@ -34,6 +34,26 @@ def test_action_alignment():
     torch.testing.assert_close(preds, targets)
 
 
+def test_action_alignment_with_context():
+    dim = 32
+    align = ActionAlignment(num_codes=4, num_actions=5, dim=dim, use_state_context=True)
+    codes = torch.tensor([0, 1, 2, 3])
+    # Distinct context vectors for each sample
+    z = torch.randn(4, 16, dim)
+    targets = torch.tensor([1, 2, 3, 4])
+
+    opt = torch.optim.Adam(align.parameters(), lr=0.05)
+    for _ in range(60):
+        logits = align(codes, z=z)
+        loss = align.loss(logits, targets)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+
+    preds = align.predict_action(codes, z=z)
+    torch.testing.assert_close(preds, targets)
+
+
 def test_cem_planner():
     torch.manual_seed(0)
     dynamics = JEPADynamics(TINY_DYN).eval()
@@ -51,3 +71,25 @@ def test_cem_planner():
     action, seq = planner.plan(z_curr, z_goal)
     assert 0 <= action < 5
     assert seq.shape == (4,)
+
+
+def test_cem_planner_with_context_alignment():
+    torch.manual_seed(0)
+    dynamics = JEPADynamics(TINY_DYN).eval()
+    alignment = ActionAlignment(num_codes=4, num_actions=5, dim=32, use_state_context=True)
+    planner = CEMPlanner(
+        dynamics=dynamics,
+        horizon=4,
+        num_samples=16,
+        num_elites=4,
+        iterations=2,
+        alignment=alignment,
+    )
+
+    z_curr = torch.randn(1, 16, 32)
+    z_goal = torch.randn(1, 16, 32)
+
+    action, seq = planner.plan(z_curr, z_goal)
+    assert 0 <= action < 5
+    assert seq.shape == (4,)
+

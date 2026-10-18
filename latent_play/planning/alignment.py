@@ -25,10 +25,14 @@ class ActionAlignment(nn.Module):
         num_actions: int,
         dim: int = 128,
         use_state_context: bool = False,
+        embed_dim: int | None = None,
     ) -> None:
         super().__init__()
+        if embed_dim is not None:
+            dim = embed_dim
         self.num_codes = num_codes
         self.num_actions = num_actions
+        self.dim = dim
         self.use_state_context = use_state_context
 
         if use_state_context:
@@ -50,9 +54,13 @@ class ActionAlignment(nn.Module):
     def forward(self, codes: torch.Tensor, z: torch.Tensor | None = None) -> torch.Tensor:
         """codes: [B, ...] int64 code indices -> logits: [B, ..., num_actions]."""
         if self.use_state_context:
-            assert z is not None
-            if z.ndim == codes.ndim + 2:
-                z = z.mean(dim=-2)  # pool spatial patches [B, ..., N, D] -> [B, ..., D]
+            assert z is not None, "z representation context must be provided when use_state_context=True"
+            # Pool spatial patch dimensions so that z matches codes shape up to feature dim
+            if z.shape[: codes.ndim] == codes.shape:
+                while z.ndim > codes.ndim + 1:
+                    z = z.mean(dim=-2)
+            else:
+                z = z.reshape(*codes.shape, -1, z.shape[-1]).mean(dim=-2)
             one_hot_codes = F.one_hot(codes, self.num_codes).float()
             inp = torch.cat([one_hot_codes, z], dim=-1)
             return self.net(inp)

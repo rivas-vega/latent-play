@@ -34,20 +34,28 @@ def train_alignment_probe(
     lam: LatentActionModel,
     loader: DataLoader,
     device: torch.device,
+    dyn_model: JEPADynamics | None = None,
     epochs: int = 8,
     lr: float = 1e-2,
+    use_state_context: bool = False,
 ) -> ActionAlignment:
     """Trains the action alignment classifier on only the labelled subset (where action >= 0)."""
     lam.eval()
+    if dyn_model is not None:
+        dyn_model.eval()
     K = lam.cfg.num_codes
     A = loader.dataset.num_actions
 
-    align = ActionAlignment(num_codes=K, num_actions=A).to(device)
+    dim = dyn_model.cfg.dim if dyn_model is not None else 128
+    use_ctx = use_state_context and dyn_model is not None
+
+    align = ActionAlignment(num_codes=K, num_actions=A, dim=dim, use_state_context=use_ctx).to(device)
     opt = torch.optim.Adam(align.parameters(), lr=lr)
 
-    # First pass: collect labelled (codes, target_actions) to compute empirical class frequencies
+    # First pass: collect labelled (codes, target_actions, optional z)
     cached_codes = []
     cached_actions = []
+    cached_z = []
     with torch.no_grad():
         for batch in loader:
             target_actions = batch["action"]
@@ -58,12 +66,17 @@ def train_alignment_probe(
             codes = lam.infer_actions(frames)["indices"].cpu()
             cached_codes.append(codes[valid])
             cached_actions.append(target_actions[valid])
+            if use_ctx:
+                # State context from initial transition frames [B, T-1, 3, H, W] -> [B, T-1, N, D]
+                z = dyn_model.encode(frames[:, :-1]).cpu()
+                cached_z.append(z[valid])
 
     if not cached_actions:
         return align
 
     all_codes = torch.cat(cached_codes, dim=0).to(device)
     all_actions = torch.cat(cached_actions, dim=0).to(device)
+    all_z = torch.cat(cached_z, dim=0).to(device) if use_ctx else None
 
     counts = torch.bincount(all_actions, minlength=A).float()
     prior = (counts + 1.0) / (counts.sum() + A)
@@ -73,7 +86,7 @@ def train_alignment_probe(
     class_weights = class_weights / class_weights.mean()
 
     for _ in range(epochs * 10):
-        logits = align(all_codes)
+        logits = align(all_codes, z=all_z)
         loss = align.loss(logits, all_actions, codes=all_codes, class_weights=class_weights)
         opt.zero_grad()
         loss.backward()
@@ -94,6 +107,7 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--out-dir", default="outputs/sweep_results")
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    ap.add_argument("--use-state-context", action="store_true", default=False, help="Condition alignment probe on visual state context")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -102,7 +116,7 @@ def main() -> None:
     env_name = Path(args.data_root).name
 
     print(f"Running label-fraction sweep on fractions: {args.fractions}")
-    print(f"Seeds: {args.seeds}")
+    print(f"Seeds: {args.seeds} | Use State Context: {args.use_state_context}")
 
     results = {
         "fractions": args.fractions,
@@ -158,7 +172,13 @@ def main() -> None:
                 )
                 train_loader = DataLoader(train_ds, batch_size=64, shuffle=False)
 
-                align = train_alignment_probe(lam, train_loader, device)
+                align = train_alignment_probe(
+                    lam,
+                    train_loader,
+                    device,
+                    dyn_model=dyn_model,
+                    use_state_context=args.use_state_context,
+                )
                 torch.save(
                     {
                         "alignment": align.state_dict(),
@@ -166,6 +186,10 @@ def main() -> None:
                         "num_actions": train_ds.num_actions,
                         "fraction": frac,
                         "seed": seed,
+                        "use_state_context": align.use_state_context,
+                        "dim": align.dim,
+                        "embed_dim": align.dim,
+                        "action_prior": align.action_prior.cpu(),
                     },
                     out / f"alignment_f{frac}_s{seed}.pt",
                 )
@@ -177,7 +201,12 @@ def main() -> None:
                     v_true = v_batch["action_true"].to(device)
                     with torch.no_grad():
                         codes = lam.infer_actions(v_frames)["indices"]
-                        preds = align.predict_action(codes, prior_correction=0.5)
+                        z_val = (
+                            dyn_model.encode(v_frames[:, :-1])
+                            if (dyn_model is not None and align.use_state_context)
+                            else None
+                        )
+                        preds = align.predict_action(codes, z=z_val, prior_correction=0.5)
                     correct += (preds == v_true).sum().item()
                     total += v_true.numel()
 
