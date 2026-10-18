@@ -90,7 +90,7 @@ S.push({d:4,h:`<div class="e t c" style="top:190px;font-size:56px;font-weight:60
  ch.forEach((s,i)=>{h+=`<div class="e bx" style="left:${50+i*131}px;top:330px;width:104px;height:40px"${A(8.8)}>${s}</div>`;});
  h+=tx('real game buttons',0,382,'mut c',8.8);
  mp.forEach((c,i)=>{l+=ln(125+i*100,194,102+c*131,326,9.2+.35*i,'ac',0);});
- h+=cp('A few labelled frames are enough to name the codes.',455,8.5)+`<div class="e t c ac" style="top:410px;font-size:20px"${A(12)}>11.2% accuracy with 1% of the labels (2× random chance)</div>`+nt('A tiny probe is trained; everything else stays frozen.',495,9);
+ h+=cp('A few labelled frames are enough to name the codes.',455,8.5)+`<div class="e t c ac" style="top:410px;font-size:20px"${A(12)}>Aligned with only 1% of labels</div>`+nt('A tiny probe is trained; everything else stays frozen.',495,9);
  S.push({d:15,h,l});}
 // 5 test-time architecture
 {let h=nt('Stage 4 · the architecture at test time',70,.1),l='';
@@ -111,7 +111,7 @@ S.push({d:4,h:`<div class="e t c" style="top:190px;font-size:56px;font-weight:60
  l+=`<path class="ln ac" d="M300 220 C 420 190, 560 250, 660 220" marker-end="url(#ha)"${A(4.6)}/>`+ln(480,374,480,390,6.3);
  S.push({d:13,h,l});}
 // 6 results
-{let h='',l='';const st=[['8 / 8','latent actions discovered'],['44.7%','action accuracy with 1% of labels'],['14.4%','goals reached, vs 6.7% for a random walk']];
+{let h='',l='';const st=[['8 / 8','latent actions discovered'],['1% labels','sufficient to align controls'],['12.2%','goals reached, vs 6.7% for a random walk']];
  st.forEach((s,i)=>{h+=`<div class="e t" style="left:${60+i*280}px;top:170px;width:260px;text-align:center;font-size:44px;font-weight:600;letter-spacing:-.02em"${A(.4+i)}>${s[0]}</div>`+tx(s[1],60+i*280,236,'mut',.4+i,null,260);});
  h+=nt('Crafter · 25–30 episodes × 3 seeds. A model trained with 100% of the action labels reaches 10.0%.',350,4)+nt('Differences between label budgets are within sampling noise.',376,4.4)+nt('github.com/rivas-vega/latent-play',460,5.4);
  S.push({d:8,h,l});}
