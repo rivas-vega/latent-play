@@ -56,6 +56,14 @@ class LatentActionModel(nn.Module):
         self.spatial_attn = nn.Linear(cfg.dim, 1)
 
         in_dim = cfg.dim * 2 if cfg.state_context else cfg.dim
+        if cfg.state_context:
+            num_patches = (cfg.image_size // cfg.patch) ** 2
+            self.flow_conv = nn.Sequential(
+                nn.Conv2d(cfg.dim * 2, cfg.dim, kernel_size=3, padding=1),
+                nn.GELU(),
+            )
+            self.flow_pos = nn.Parameter(torch.zeros(1, 1, num_patches, cfg.dim))
+            nn.init.trunc_normal_(self.flow_pos, std=0.02)
         self.action_ln = nn.LayerNorm(in_dim)
         self.to_action = nn.Linear(in_dim, cfg.code_dim)
         self.vq = VectorQuantizer(cfg.num_codes, cfg.code_dim, beta=cfg.beta)
@@ -70,12 +78,20 @@ class LatentActionModel(nn.Module):
     def _pool_transitions(self, h: torch.Tensor) -> torch.Tensor:
         """Pools temporal feature differences dh = h[:, 1:] - h[:, :-1] across spatial patches via attention."""
         dh = h[:, 1:] - h[:, :-1]  # [B, T-1, N, D] — cancels static episode background
-        weights = F.softmax(self.spatial_attn(dh), dim=2)  # [B, T-1, N, 1]
-        pooled = (dh * weights).sum(dim=2)  # [B, T-1, D]
         if self.cfg.state_context:
-            # Also pool the initial state at the attended action locations
-            state_ctx = (h[:, :-1] * weights).sum(dim=2)  # [B, T-1, D]
-            pooled = torch.cat([pooled, state_ctx], dim=-1)
+            B, T_m1, N, D = dh.shape
+            g = int(N**0.5)
+            # Combine initial state h_t and temporal difference dh over 2D patch neighborhood (3x3)
+            # so each patch sees directional displacements (up/down/left/right) and adjacent obstacles
+            cat_2d = torch.cat([h[:, :-1], dh], dim=-1).permute(0, 1, 3, 2).reshape(B * T_m1, D * 2, g, g)
+            flow_feat = self.flow_conv(cat_2d).reshape(B, T_m1, D, N).permute(0, 1, 3, 2) + self.flow_pos
+            weights = F.softmax(self.spatial_attn(flow_feat), dim=2)  # [B, T-1, N, 1]
+            pooled_dh = (dh * weights).sum(dim=2)
+            pooled_flow = (flow_feat * weights).sum(dim=2)
+            pooled = torch.cat([pooled_dh, pooled_flow], dim=-1)
+        else:
+            weights = F.softmax(self.spatial_attn(dh), dim=2)  # [B, T-1, N, 1]
+            pooled = (dh * weights).sum(dim=2)  # [B, T-1, D]
         return self.to_action(self.action_ln(pooled))
 
     # ------------------------------------------------------------ inference
@@ -105,8 +121,12 @@ class LatentActionModel(nn.Module):
 
     def decode(self, past: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         """past [B, T', 3, H, W], actions [B, T', code_dim] -> next frames [B, T', 3, H, W]."""
-        h = self.dec_embed(past) + self.action_proj(actions)[:, :, None, :]
-        delta = unpatchify(self.head(self.decoder(h)), self.cfg.patch)
+        B, T_p, C, H, W = past.shape
+        # Decode each transition Markovianly (x_t + a_t -> x_{t+1}) without leaking velocity from x_{t-1}
+        past_flat = past.reshape(B * T_p, 1, C, H, W)
+        act_flat = self.action_proj(actions).reshape(B * T_p, 1, 1, -1)
+        h = self.dec_embed(past_flat) + act_flat
+        delta = unpatchify(self.head(self.decoder(h)), self.cfg.patch).reshape(B, T_p, C, H, W)
         return past + delta
 
     def decode_indices(self, past: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:

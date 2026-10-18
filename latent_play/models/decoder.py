@@ -41,7 +41,13 @@ class VisualDecoder(nn.Module):
         self.apply(_init_weights)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        """z: [B, N, D] (or [B, T, N, D]) -> frames: [B, 3, H, W] (or [B, T, 3, H, W])."""
+        """z: [B, N, D] / [B, D] (or [B, T, N, D] / [B, T, D]) -> frames: [B, 3, H, W] (or [B, T, 3, H, W])."""
+        # If pooled tokens [B, D] or [B, T, D], expand across spatial patches
+        if z.ndim == 2:
+            z = z.unsqueeze(1).expand(-1, self.num_patches, -1)
+        elif z.ndim == 3 and z.shape[1] != self.num_patches:
+            z = z.unsqueeze(2).expand(-1, -1, self.num_patches, -1)
+
         has_time = z.ndim == 4
         if has_time:
             B, T, N, D = z.shape
