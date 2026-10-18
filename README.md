@@ -4,10 +4,13 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Interactive Animation](https://img.shields.io/badge/Interactive_Animation-docs%2Fanimation.html-0064E0.svg)](docs/animation.html)
 [![Paper PDF](https://img.shields.io/badge/Paper-report%2Fmain.pdf-b31b1b.svg)](report/main.pdf)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/latent-play/blob/main/notebooks/colab_training_and_demo.ipynb)
 
 > **Research Question:** *Can a Joint-Embedding Predictive Architecture (JEPA) learn a controllable, non-collapsing world model purely from unlabelled gameplay video—and how few real action labels are needed to align its discovered latent actions for closed-loop planning?*
+
+> 💡 **Interactive Architecture Walkthrough:** Open [`docs/animation.html`](docs/animation.html) for an autonomous ~85-second visual presentation (pure HTML5 + SVG) animating the filmstrip data flow, the 8-slot action rack, SIGReg anti-collapse geometry, and latent CEM planning.
 
 <p align="center">
   <img src="outputs/eval_planning/planned_trajectory_annotated.gif" width="760" alt="Annotated Closed-Loop Latent Planning in Crafter"/>

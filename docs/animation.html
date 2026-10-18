@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>latent-play: Interactive Explanatory Architecture Animation</title>
+  <style>
+    /* =========================================================================
+       RESET & BASE STYLING (Meta AI Research Clean Aesthetic)
+       ========================================================================= */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    :root {
+      --bg-page: #F1F4F7;
+      --bg-card: #FFFFFF;
+      --text-main: #1C2B33;
+      --text-muted: #566874;
+      --text-dim: #8B9BA5;
+      --meta-blue: #0064E0;
+      --meta-blue-light: #E7F0FE;
+      --meta-blue-hover: #0050B3;
+      --border-subtle: #E2E8F0;
+      --border-medium: #CBD5E1;
+      --green-accent: #059669;
+      --green-light: #ECFDF5;
+      --orange-accent: #D97706;
+      --purple-accent: #7C3AED;
+      --font-stack: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      font-family: var(--font-stack);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 12px;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* Container for 16:9 responsive artboard */
+    .player-wrapper {
+      width: 100%;
+      max-width: 1360px;
+      background: var(--bg-card);
+      border-radius: 16px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Navigation Minimap & Legend */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: #FAFCFE;
+      font-size: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .brand-title {
+      font-weight: 700;
+      color: var(--meta-blue);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: -0.2px;
+    }
+    .brand-title .badge {
+      background: var(--meta-blue-light);
+      color: var(--meta-blue);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* Minimap chips */
+    .stage-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .chip {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 600;
+      font-size: 11px;
+      background: #E2E8F0;
+      color: var(--text-muted);
+      transition: all 0.25s ease;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .chip.active {
+      background: var(--meta-blue);
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(0, 100, 224, 0.35);
+    }
+
+    /* Top Legend */
+    .top-legend {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .dot-sample {
+      width: 9px;
+      height: 9px;
+      border-radius: 2px;
+    }
+
+    /* Artboard SVG Area */
+    .viewport-box {
+      width: 100%;
+      position: relative;
+      background: #FFFFFF;
+      aspect-ratio: 16 / 9;
+    }
+    #animation-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Subtitle area */
+    .subtitle-bar {
+      min-height: 48px;
+      background: #F8FAFC;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8px 24px;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text-main);
+      line-height: 1.4;
+      transition: opacity 0.2s ease;
+    }
+    .subtitle-bar em {
+      font-style: normal;
+      font-weight: 700;
+      color: var(--meta-blue);
+    }
+
+    /* Bottom Player Controls */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 18px;
+      background: #FFFFFF;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .btn-control {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-main);
+      transition: all 0.15s ease;
+    }
+    .btn-control:hover {
+      background: var(--bg-page);
+      border-color: var(--border-medium);
+      color: var(--meta-blue);
+    }
+    .btn-control svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+
+    /* Scrubbable progress bar with tick marks */
+    .scrubber-container {
+      flex: 1;
+      position: relative;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+    }
+    .scrubber-track {
+      width: 100%;
+      height: 6px;
+      background: #E2E8F0;
+      border-radius: 3px;
+      position: relative;
+      overflow: visible;
+    }
+    .scrubber-fill {
+      height: 100%;
+      background: var(--meta-blue);
+      border-radius: 3px;
+      width: 0%;
+      pointer-events: none;
+      position: relative;
+    }
+    .scrubber-thumb {
+      position: absolute;
+      right: -6px;
+      top: -4px;
+      width: 14px;
+      height: 14px;
+      background: var(--meta-blue);
+      border: 2px solid #FFFFFF;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    .tick-mark {
+      position: absolute;
+      top: -3px;
+      width: 2px;
+      height: 12px;
+      background: #94A3B8;
+      transform: translateX(-50%);
+      pointer-events: none;
+      border-radius: 1px;
+    }
+    .tick-label {
+      position: absolute;
+      top: 14px;
+      transform: translateX(-50%);
+      font-size: 9.5px;
+      font-weight: 600;
+      color: var(--text-dim);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .time-display {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 76px;
+      text-align: right;
+    }
+
+    /* Speed toggles */
+    .speed-group {
+      display: flex;
+      align-items: center;
+      background: var(--bg-page);
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .btn-speed {
+      background: transparent;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s ease;
+    }
+    .btn-speed.active {
+      background: #FFFFFF;
+      color: var(--meta-blue);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* Accessibility: reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="player-wrapper">
+    <!-- Top Minimap & Fixed Legend -->
+    <header class="top-bar">
+      <div class="brand-title">
+        <span>latent-play</span>
+        <span class="badge">Architecture Walkthrough</span>
+      </div>
+
+      <!-- Minimap chips (clickable to jump) -->
+      <nav class="stage-chips" aria-label="Stages">
+        <div class="chip" id="chip-intro" onclick="seekTo(0)">Overview</div>
+        <div class="chip" id="chip-s1" onclick="seekTo(7.5)">1. LAM (0% labels)</div>
+        <div class="chip" id="chip-s2" onclick="seekTo(21.0)">2. JEPA + SIGReg</div>
+        <div class="chip" id="chip-s3" onclick="seekTo(39.0)">3. Few-Shot Alignment</div>
+        <div class="chip" id="chip-s4" onclick="seekTo(50.0)">4. Latent Planning (CEM)</div>
+        <div class="chip" id="chip-results" onclick="seekTo(73.0)">Results & Takeaways</div>
+      </nav>
+
+      <!-- Visual Data Color Key -->
+      <div class="top-legend">
+        <div class="legend-item">
+          <div class="dot-sample" style="background:#0EA5E9;"></div>
+          <span>Video frames</span>
+        </div>
+        <div class="legend-item">
+          <div class="dot-sample" style="background:#F97316;"></div>
+          <span>8 Latent codes (k)</span>
+        </div>
+        <div class="legend-item">
+          <div class="dot-sample" style="background:#059669;"></div>
+          <span>Real actions (a)</span>
+        </div>
+        <div class="legend-item">
+          <span style="font-size:12px;">🔒</span>
+          <span>Frozen</span>
+        </div>
+        <div class="legend-item">
+          <div class="dot-sample" style="background:#0064E0;"></div>
+          <span>Trained</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main SVG 16:9 Viewport -->
+    <main class="viewport-box">
+      <svg id="animation-svg" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <!-- Grid patterns, linear gradients & arrow markers -->
+          <linearGradient id="gradMeta" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0064E0" />
+            <stop offset="100%" stop-color="#0081FB" />
+          </linearGradient>
+
+          <linearGradient id="gradOnline" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#EFF6FF" />
+            <stop offset="100%" stop-color="#DBEAFE" />
+          </linearGradient>
+
+          <linearGradient id="gradTarget" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#F8FAFC" />
+            <stop offset="100%" stop-color="#E2E8F0" />
+          </linearGradient>
+
+          <linearGradient id="gradPredictor" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#ECFDF5" />
+            <stop offset="100%" stop-color="#D1FAE5" />
+          </linearGradient>
+
+          <linearGradient id="gradSIGReg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FAF5FF" />
+            <stop offset="100%" stop-color="#F3E8FF" />
+          </linearGradient>
+
+          <!-- Drop shadows -->
+          <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#0F172A" flood-opacity="0.06" />
+          </filter>
+          <filter id="glowBlue" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#0064E0" flood-opacity="0.4" />
+          </filter>
+          <filter id="glowOrange" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#F97316" flood-opacity="0.5" />
+          </filter>
+
+          <!-- Arrow markers -->
+          <marker id="arrow-blue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#0064E0" />
+          </marker>
+          <marker id="arrow-gray" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#64748B" />
+          </marker>
+          <marker id="arrow-green" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#059669" />
+          </marker>
+          <marker id="arrow-orange" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#F97316" />
+          </marker>
+        </defs>
+
+        <!-- Base Background Layer -->
+        <rect width="1600" height="900" fill="#FFFFFF" />
+
+        <!-- PERSISTENT TOP LAYER: Filmstrip + Active Frame Selector -->
+        <g id="layer-filmstrip"></g>
+
+        <!-- PERSISTENT MIDDLE LAYER: 8-Slot Latent Action Rack -->
+        <g id="layer-action-rack"></g>
+
+        <!-- DYNAMIC SCENE STAGE (Updated by render(t)) -->
+        <g id="layer-stage"></g>
+
+        <!-- OVERLAY LAYER: Flying frames, traveling code packets, particles -->
+        <g id="layer-overlay"></g>
+      </svg>
+    </main>
+
+    <!-- Subtitle Bar (Dynamic Narrative) -->
+    <div class="subtitle-bar" id="subtitle-text">
+      Loading animation...
+    </div>
+
+    <!-- Bottom Controls -->
+    <footer class="controls-bar">
+      <!-- Play / Pause -->
+      <button class="btn-control" id="btn-play-pause" title="Play / Pause (Space)" onclick="togglePlayPause()">
+        <svg id="icon-play" viewBox="0 0 24 24" style="display:none;"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="icon-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+
+      <!-- Restart -->
+      <button class="btn-control" id="btn-restart" title="Restart from beginning" onclick="seekTo(0)">
+        <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </button>
+
+      <!-- Scrubber track with tick marks -->
+      <div class="scrubber-container" id="scrubber-container">
+        <div class="scrubber-track" id="scrubber-track">
+          <div class="scrubber-fill" id="scrubber-fill">
+            <div class="scrubber-thumb"></div>
+          </div>
+          <!-- Ticks injected via JS -->
+        </div>
+      </div>
+
+      <!-- Time display -->
+      <div class="time-display" id="time-display">00:00 / 01:27</div>
+
+      <!-- Speed buttons -->
+      <div class="speed-group">
+        <button class="btn-speed" id="spd-05" onclick="setSpeed(0.5)">0.5x</button>
+        <button class="btn-speed active" id="spd-10" onclick="setSpeed(1.0)">1x</button>
+        <button class="btn-speed" id="spd-20" onclick="setSpeed(2.0)">2x</button>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    /* =========================================================================
+       TEXT DEFINITIONS & SCENE METADATA (English, easily translatable)
+       ========================================================================= */
+    const TEXT = {
+      title_main: "latent-play: learning actionable world models from unlabelled gameplay",
+      title_sub: "How few action labels are needed to plan in a world model learned from video?",
+      how_to_read: "How to read this animation: key data types and model states",
+      s1_subtitle: "Whatever changed between frames is compressed into one of 8 discrete latent actions. No labels.",
+      s2_subtitle: "The JEPA world model learns to predict the next latent state given a latent action. SIGReg prevents collapse.",
+      s3_subtitle: "A tiny 2-layer probe learns which game button each latent code corresponds to using 0.1%–10% labels.",
+      s4_subtitle: "It plans by imagining 128 futures in latent space (CEM), then acts one step at a time in the real game.",
+      s5_subtitle: "Discovered actions match full action supervision while needing 99% fewer real labels.",
+      s6_subtitle: "Summary: from passive gameplay video to playable, plannable world models with zero pixel imagination.",
+    };
+
+    /* Fixed 8-color pastel palette for the 8 latent action slots (Adjustment B) */
+    const CODE_COLORS = [
+      "#F97316", // 0: Orange (stationary interaction / do)
+      "#0EA5E9", // 1: Sky blue (sleep / darken)
+      "#10B981", // 2: Mint green (blocked motion / craft)
+      "#8B5CF6", // 3: Lilac (place object)
+      "#EAB308", // 4: Warm yellow (tool strike)
+      "#EC4899", // 5: Pink (locomotion variant)
+      "#14B8A6", // 6: Teal (cardinal movement - 95.6% purity)
+      "#78716C", // 7: Warm sand (cardinal movement - 94.7% purity)
+    ];
+
+    const SCENES = [
+      { id: "intro", start: 0.0, end: 4.0, name: "Title" },
+      { id: "legend", start: 4.0, end: 7.5, name: "How to Read" },
+      { id: "s1_lam", start: 7.5, end: 21.0, name: "1. LAM" },
+      { id: "s2_jepa", start: 21.0, end: 39.0, name: "2. JEPA" },
+      { id: "s3_align", start: 39.0, end: 50.0, name: "3. Alignment" },
+      { id: "s4_plan", start: 50.0, end: 73.0, name: "4. Planning" },
+      { id: "s5_results", start: 73.0, end: 81.0, name: "Results" },
+      { id: "s6_summary", start: 81.0, end: 87.0, name: "Summary" },
+    ];
+    const TOTAL_DURATION = 87.0;
+
+    /* Player state */
+    let currentTime = 0.0;
+    let isPlaying = true;
+    let playSpeed = 1.0;
+    let lastTimestamp = null;
+
+    /* SVG Layer Cache */
+    const svgEl = document.getElementById("animation-svg");
+    const layerFilmstrip = document.getElementById("layer-filmstrip");
+    const layerRack = document.getElementById("layer-action-rack");
+    const layerStage = document.getElementById("layer-stage");
+    const layerOverlay = document.getElementById("layer-overlay");
+    const subtitleEl = document.getElementById("subtitle-text");
+
+    /* Math & Easing Helpers */
+    const clamp = (v, min = 0, max = 1) => Math.min(Math.max(v, min), max);
+    const easeInOut = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    const easeOutCubic = (t) => (--t) * t * t + 1;
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    /* =========================================================================
+       INITIALIZE SCRUBBER TICKS & LABELS
+       ========================================================================= */
+    function initScrubber() {
+      const track = document.getElementById("scrubber-track");
+      SCENES.forEach((sc, i) => {
+        if (i === 0) return;
+        const pct = (sc.start / TOTAL_DURATION) * 100;
+        const tick = document.createElement("div");
+        tick.className = "tick-mark";
+        tick.style.left = `${pct}%`;
+        track.appendChild(tick);
+
+        if (i % 2 === 1 || i === SCENES.length - 1) {
+          const lbl = document.createElement("div");
+          lbl.className = "tick-label";
+          lbl.style.left = `${pct}%`;
+          lbl.innerText = sc.name;
+          track.appendChild(lbl);
+        }
+      });
+
+      const container = document.getElementById("scrubber-container");
+      let isDragging = false;
+
+      function onScrub(e) {
+        const rect = track.getBoundingClientRect();
+        const pos = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        currentTime = pos * TOTAL_DURATION;
+        render(currentTime);
+      }
+      container.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        onScrub(e);
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (isDragging) onScrub(e);
+      });
+      window.addEventListener("mouseup", () => {
+        isDragging = false;
+      });
+    }
+
+    /* =========================================================================
+       RENDER PERMANENT COMPONENTS: Filmstrip (A) & 8-Slot Rack (B)
+       ========================================================================= */
+    function renderFilmstrip(t) {
+      let html = "";
+      // Only visible during active learning / planning (Scene 1 to 4 & Summary)
+      const stripOpacity = (t < 4.0) ? 0 : (t < 7.5 ? (t - 4.0) / 3.5 : 1);
+      if (stripOpacity <= 0.01) {
+        layerFilmstrip.innerHTML = "";
+        return;
+      }
+
+      html += `<g opacity="${stripOpacity}">`;
+      // Background shelf
+      html += `<rect x="60" y="8" width="1480" height="96" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5" />`;
+      html += `<text x="75" y="26" font-size="11" font-weight="700" fill="#64748B" letter-spacing="0.3">CRAFTER GAMEPLAY FILMSTRIP (UNLABELLED 64×64 FRAMES)</text>`;
+
+      // Determine virtual frame cursor based on time
+      const frameCycle = Math.floor(t * 1.5);
+      const totalThumbnails = 12;
+
+      for (let i = 0; i < totalThumbnails; i++) {
+        const fx = 75 + i * 122;
+        const fy = 34;
+        const frameIdx = (frameCycle + i) % 30;
+        
+        // Agent coordinate simulation
+        const ax = (frameIdx * 7) % 44 + 8;
+        const ay = (frameIdx * 5) % 40 + 10;
+
+        // Is this the active pair (x_t, x_{t+1})?
+        const isPairLeft = (i === 4);
+        const isPairRight = (i === 5);
+        const isPair = isPairLeft || isPairRight;
+
+        // Frame border & canvas
+        html += `<g transform="translate(${fx}, ${fy})">`;
+        html += `<rect width="112" height="62" rx="6" fill="#D1FAE5" stroke="${isPair ? '#0064E0' : '#CBD5E1'}" stroke-width="${isPair ? '2.5' : '1'}" />`;
+        
+        // Background terrain details (water river on right, stone patch top)
+        html += `<rect x="80" y="0" width="32" height="62" fill="#BAE6FD" rx="2" />`; // River
+        html += `<rect x="10" y="5" width="28" height="20" fill="#E2E8F0" rx="3" />`; // Stone quarry
+
+        // Red Agent square
+        html += `<rect x="${ax * 2}" y="${ay}" width="12" height="12" rx="3" fill="#EF4444" stroke="#B91C1C" stroke-width="1.2" />`;
+
+        // Frame Label
+        let label = `x_{t+${i - 4}}`;
+        if (i === 4) label = "x_t (live)";
+        if (i === 5) label = "x_{t+1}";
+        if (t >= 50.0 && i === 10) label = "x_goal 🎯";
+
+        html += `<text x="56" y="56" text-anchor="middle" font-size="10" font-weight="700" fill="${isPair ? '#0064E0' : '#475569'}">${label}</text>`;
+        html += `</g>`;
+      }
+
+      // Active Pair highlight cursor box
+      const cursorX = 75 + 4 * 122 - 4;
+      html += `<rect x="${cursorX}" y="30" width="248" height="70" rx="8" fill="none" stroke="#0064E0" stroke-width="2.5" stroke-dasharray="6 4" filter="url(#glowBlue)" />`;
+      html += `<text x="${cursorX + 124}" y="24" text-anchor="middle" font-size="11" font-weight="700" fill="#0064E0">ACTIVE CONSECUTIVE PAIR</text>`;
+
+      html += `</g>`;
+      layerFilmstrip.innerHTML = html;
+    }
+
+    function renderActionRack(t) {
+      // Rack is permanently centered at y=118..188
+      let html = "";
+      const rackOpacity = (t < 4.0) ? 0 : (t < 7.5 ? (t - 4.0) / 3.5 : 1);
+      if (rackOpacity <= 0.01) {
+        layerRack.innerHTML = "";
+        return;
+      }
+
+      html += `<g opacity="${rackOpacity}">`;
+      // Container box
+      html += `<rect x="220" y="116" width="1160" height="70" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />`;
+      html += `<text x="240" y="134" font-size="11" font-weight="700" fill="#64748B" letter-spacing="0.4">LATENT ACTION CODEBOOK (DISCRETE BOTTLENECK, K = 8 CODES)</text>`;
+
+      // Active highlighted slot based on current phase
+      let activeCode = -1;
+      let usedCount = 8;
+      if (t >= 7.5 && t < 21.0) {
+        // Stage 1: progressively fill slots 0..7
+        const progress = clamp((t - 7.5) / 10.0, 0, 1);
+        usedCount = Math.min(8, Math.floor(progress * 8) + 1);
+        activeCode = 6; // Code 6 is the discovered directional locomotion
+      } else if (t >= 21.0 && t < 39.0) {
+        activeCode = 6;
+      } else if (t >= 39.0 && t < 50.0) {
+        activeCode = 6;
+      } else if (t >= 50.0 && t < 73.0) {
+        // Planning unrolls
+        const planStep = Math.floor(t * 3) % 8;
+        activeCode = [6, 7, 6, 5, 6, 7, 6, 6][planStep];
+      }
+
+      const slotW = 120;
+      const slotGap = 16;
+      const startX = 240;
+
+      for (let k = 0; k < 8; k++) {
+        const sx = startX + k * (slotW + slotGap);
+        const sy = 142;
+        const isLit = k < usedCount;
+        const isActive = (k === activeCode);
+        const col = CODE_COLORS[k];
+
+        html += `<g transform="translate(${sx}, ${sy})">`;
+        html += `<rect width="${slotW}" height="36" rx="8" fill="${isLit ? col : '#F1F5F9'}" fill-opacity="${isActive ? '0.95' : (isLit ? '0.45' : '0.3')}" stroke="${isActive ? '#1E293B' : (isLit ? col : '#CBD5E1')}" stroke-width="${isActive ? '2.5' : '1.5'}" ${isActive ? 'filter="url(#glowOrange)"' : ''} />`;
+        
+        // Slot label (0 to 7) - NO semantic text in Stage 1 per Adjustment B!
+        html += `<text x="16" y="23" font-size="13" font-weight="800" fill="${isActive ? '#0F172A' : (isLit ? '#1E293B' : '#94A3B8')}">k = ${k}</text>`;
+
+        // Miniature visual change glyph inside slot
+        if (isLit) {
+          html += `<circle cx="85" cy="18" r="6" fill="${col}" stroke="#FFFFFF" stroke-width="1.5" />`;
+          html += `<text x="104" y="22" font-size="9" font-weight="700" fill="#475569">✓</text>`;
+        } else {
+          html += `<text x="85" y="22" font-size="10" font-weight="600" fill="#94A3B8">empty</text>`;
+        }
+        html += `</g>`;
+      }
+
+      // Usage badge on right
+      html += `<rect x="1275" y="132" width="90" height="38" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5" />`;
+      html += `<text x="1320" y="148" text-anchor="middle" font-size="11" font-weight="800" fill="#047857">${usedCount} / 8</text>`;
+      html += `<text x="1320" y="162" text-anchor="middle" font-size="9" font-weight="600" fill="#065F46">Codes Used</text>`;
+
+      html += `</g>`;
+      layerRack.innerHTML = html;
+    }
+
+    /* =========================================================================
+       MAIN PROCEDURAL STAGE RENDERER (Pure render(t))
+       ========================================================================= */
+    function render(t) {
+      // 1. Update minimap chip highlights
+      updateChips(t);
+
+      // 2. Render permanent filmstrip & permanent 8-slot rack
+      renderFilmstrip(t);
+      renderActionRack(t);
+
+      // 3. Clear transient overlay
+      layerOverlay.innerHTML = "";
+
+      // 4. Dispatch scene renderer
+      let stageHtml = "";
+      if (t < 4.0) {
+        stageHtml = renderScene0(t);
+        subtitleEl.innerHTML = TEXT.title_sub;
+      } else if (t < 7.5) {
+        stageHtml = renderSceneLegend(t);
+        subtitleEl.innerHTML = TEXT.how_to_read;
+      } else if (t < 21.0) {
+        stageHtml = renderScene1_LAM(t);
+        subtitleEl.innerHTML = TEXT.s1_subtitle;
+      } else if (t < 39.0) {
+        stageHtml = renderScene2_JEPA(t);
+        subtitleEl.innerHTML = TEXT.s2_subtitle;
+      } else if (t < 50.0) {
+        stageHtml = renderScene3_Alignment(t);
+        subtitleEl.innerHTML = TEXT.s3_subtitle;
+      } else if (t < 73.0) {
+        stageHtml = renderScene4_Planning(t);
+        subtitleEl.innerHTML = TEXT.s4_subtitle;
+      } else if (t < 81.0) {
+        stageHtml = renderScene5_Results(t);
+        subtitleEl.innerHTML = TEXT.s5_subtitle;
+      } else {
+        stageHtml = renderScene6_Summary(t);
+        subtitleEl.innerHTML = TEXT.s6_subtitle;
+      }
+      layerStage.innerHTML = stageHtml;
+
+      // 5. Update scrubber UI & time label
+      const pct = (t / TOTAL_DURATION) * 100;
+      document.getElementById("scrubber-fill").style.width = `${pct}%`;
+      document.getElementById("time-display").innerText = `${formatTime(t)} / ${formatTime(TOTAL_DURATION)}`;
+    }
+
+    /* Helper: Format seconds to mm:ss */
+    function formatTime(s) {
+      const mins = Math.floor(s / 60);
+      const secs = Math.floor(s % 60);
+      return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }
+
+    /* Helper: Update Minimap navigation chips */
+    function updateChips(t) {
+      const chips = [
+        { id: "chip-intro", active: t < 7.5 },
+        { id: "chip-s1", active: t >= 7.5 && t < 21.0 },
+        { id: "chip-s2", active: t >= 21.0 && t < 39.0 },
+        { id: "chip-s3", active: t >= 39.0 && t < 50.0 },
+        { id: "chip-s4", active: t >= 50.0 && t < 73.0 },
+        { id: "chip-results", active: t >= 73.0 },
+      ];
+      chips.forEach(c => {
+        const el = document.getElementById(c.id);
+        if (el) {
+          if (c.active) el.classList.add("active");
+          else el.classList.remove("active");
+        }
+      });
+    }
+
+    /* =========================================================================
+       SCENE 0: TITLE & RESEARCH QUESTION (0 to 4s)
+       ========================================================================= */
+    function renderScene0(t) {
+      const fade = clamp(t / 0.8, 0, 1) * clamp((4.0 - t) / 0.6, 0, 1);
+      return `
+        <g opacity="${fade}" transform="translate(800, 480)">
+          <rect x="-480" y="-180" width="960" height="340" rx="24" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />
+          
+          <rect x="-140" y="-140" width="280" height="32" rx="16" fill="#EFF6FF" stroke="#0064E0" stroke-width="1.5" />
+          <text x="0" y="-119" text-anchor="middle" font-size="12" font-weight="700" fill="#0064E0" letter-spacing="0.5">ACTION-FREE WORLD MODEL & JEPA</text>
+          
+          <text x="0" y="-55" text-anchor="middle" font-size="34" font-weight="800" fill="#0F172A" letter-spacing="-0.6">latent-play</text>
+          <text x="0" y="-15" text-anchor="middle" font-size="20" font-weight="600" fill="#334155">Learning Actionable World Models from Unlabelled Gameplay</text>
+
+          <line x1="-360" y1="25" x2="360" y2="25" stroke="#E2E8F0" stroke-width="1.5" />
+
+          <text x="0" y="65" text-anchor="middle" font-size="16" font-weight="600" fill="#0064E0">Core Research Question:</text>
+          <text x="0" y="95" text-anchor="middle" font-size="15" font-weight="500" fill="#475569">"How few action labels are needed to plan in a world model learned purely from video?"</text>
+        </g>
+      `;
+    }
+
+    /* =========================================================================
+       SCENE 0.5 (ADJUSTMENT C): HOW TO READ THIS DIAGRAM (4 to 7.5s)
+       ========================================================================= */
+    function renderSceneLegend(t) {
+      const fade = clamp((t - 4.0) / 0.5, 0, 1) * clamp((7.5 - t) / 0.5, 0, 1);
+      return `
+        <g opacity="${fade}">
+          <rect x="250" y="240" width="1100" height="520" rx="20" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />
+          
+          <text x="800" y="290" text-anchor="middle" font-size="22" font-weight="800" fill="#0F172A">Visual Architecture Notation Guide</text>
+          <text x="800" y="318" text-anchor="middle" font-size="14" font-weight="500" fill="#64748B">Five standardized visual cues used throughout this interactive animation:</text>
+
+          <!-- 1. Video Frames -->
+          <g transform="translate(320, 370)">
+            <rect width="180" height="90" rx="10" fill="#EFF6FF" stroke="#0EA5E9" stroke-width="2" />
+            <rect x="15" y="15" width="40" height="40" rx="4" fill="#BAE6FD" />
+            <rect x="25" y="25" width="14" height="14" rx="3" fill="#EF4444" />
+            <text x="70" y="38" font-size="14" font-weight="700" fill="#0369A1">Video Frames</text>
+            <text x="70" y="56" font-size="11" font-weight="500" fill="#0284C7">Raw 64×64 pixels</text>
+            <text x="15" y="78" font-size="10.5" font-weight="600" fill="#64748B">100% Unlabelled RGB</text>
+          </g>
+
+          <!-- 2. Latent Action Codes -->
+          <g transform="translate(560, 370)">
+            <rect width="210" height="90" rx="10" fill="#FFFBEB" stroke="#F97316" stroke-width="2" />
+            <circle cx="35" cy="35" r="14" fill="#F97316" />
+            <text x="35" y="40" text-anchor="middle" font-size="12" font-weight="800" fill="#FFFFFF">k</text>
+            <text x="65" y="38" font-size="14" font-weight="700" fill="#B45309">Latent Codes</text>
+            <text x="65" y="56" font-size="11" font-weight="500" fill="#D97706">1 of K=8 discrete</text>
+            <text x="15" y="78" font-size="10.5" font-weight="600" fill="#64748B">Unsupervised actions</text>
+          </g>
+
+          <!-- 3. Real Labels -->
+          <g transform="translate(830, 370)">
+            <rect width="200" height="90" rx="10" fill="#ECFDF5" stroke="#059669" stroke-width="2" />
+            <rect x="20" y="20" width="30" height="30" rx="6" fill="#10B981" />
+            <text x="35" y="40" text-anchor="middle" font-size="16" fill="#FFFFFF">🎮</text>
+            <text x="65" y="38" font-size="14" font-weight="700" fill="#065F46">Real Labels</text>
+            <text x="65" y="56" font-size="11" font-weight="500" fill="#059669">0.1% – 10% pairs</text>
+            <text x="20" y="78" font-size="10.5" font-weight="600" fill="#64748B">Game buttons (Crafter)</text>
+          </g>
+
+          <!-- 4. Frozen Status -->
+          <g transform="translate(420, 500)">
+            <rect width="240" height="90" rx="10" fill="#F8FAFC" stroke="#94A3B8" stroke-width="2" stroke-dasharray="5 3" />
+            <text x="40" y="42" font-size="24">🔒</text>
+            <text x="75" y="38" font-size="14" font-weight="700" fill="#334155">Frozen Weights</text>
+            <text x="75" y="56" font-size="11" font-weight="500" fill="#64748B">Stop-gradient (sg)</text>
+            <text x="20" y="78" font-size="10.5" font-weight="600" fill="#64748B">No backprop updates</text>
+          </g>
+
+          <!-- 5. Trained Status -->
+          <g transform="translate(730, 500)">
+            <rect width="240" height="90" rx="10" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" filter="url(#glowBlue)" />
+            <rect x="20" y="22" width="26" height="26" rx="6" fill="#0064E0" />
+            <text x="33" y="40" text-anchor="middle" font-size="14" fill="#FFFFFF">⚡</text>
+            <text x="65" y="38" font-size="14" font-weight="700" fill="#0064E0">Trained Weights</text>
+            <text x="65" y="56" font-size="11" font-weight="500" fill="#1D4ED8">Active backpropagation</text>
+            <text x="20" y="78" font-size="10.5" font-weight="600" fill="#64748B">Learned from data</text>
+          </g>
+
+          <text x="800" y="650" text-anchor="middle" font-size="13" font-weight="600" fill="#0064E0">Proceeding to Stage 1: Unsupervised Action Discovery →</text>
+        </g>
+      `;
+    }
+
+    /* =========================================================================
+       SCENE 1: STAGE 1 — LATENT ACTION MODEL (LAM) (7.5 to 21s)
+       ========================================================================= */
+    function renderScene1_LAM(t) {
+      const relT = t - 7.5; // 0 to 13.5s
+      const enterStage = clamp(relT / 0.6, 0, 1);
+
+      // Trajectory of flying frames from filmstrip down to Stage 1 inputs
+      const flyProgress = clamp(relT / 1.5, 0, 1);
+      const f1_y = lerp(60, 280, easeOutCubic(flyProgress));
+      const f2_y = lerp(60, 280, easeOutCubic(flyProgress));
+
+      // Grid splitting animation (8x8 = 64 tokens)
+      const gridSplit = clamp((relT - 1.8) / 1.2, 0, 1);
+
+      // Motion pool vector u_t shooting to codebook
+      const uProgress = clamp((relT - 4.5) / 1.4, 0, 1);
+
+      // Code traveling to decoder
+      const decProgress = clamp((relT - 7.5) / 1.5, 0, 1);
+
+      return `
+        <g opacity="${enterStage}">
+          <!-- Stage Title Banner -->
+          <rect x="220" y="200" width="1160" height="42" rx="10" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5" />
+          <text x="240" y="226" font-size="13" font-weight="800" fill="#B45309">STAGE 1: LATENT ACTION MODEL (LAM) — 100% UNLABELLED VIDEO</text>
+          <text x="1350" y="226" text-anchor="end" font-size="12" font-weight="600" fill="#D97706">0% Action Labels</text>
+
+          <!-- 1. Consecutive Frame Inputs -->
+          <g transform="translate(240, ${f1_y})">
+            <rect width="130" height="110" rx="10" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+            <text x="65" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#0064E0">Frame x_t</text>
+            <rect x="15" y="35" width="100" height="60" rx="4" fill="#D1FAE5" stroke="#10B981" stroke-width="1" />
+            <rect x="35" y="55" width="14" height="14" rx="3" fill="#EF4444" />
+          </g>
+
+          <g transform="translate(390, ${f2_y})">
+            <rect width="130" height="110" rx="10" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+            <text x="65" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#0064E0">Frame x_{t+1}</text>
+            <rect x="15" y="35" width="100" height="60" rx="4" fill="#D1FAE5" stroke="#10B981" stroke-width="1" />
+            <!-- Agent moved right -->
+            <rect x="65" y="55" width="14" height="14" rx="3" fill="#EF4444" stroke="#B91C1C" stroke-width="1.5" />
+            <!-- Motion halo -->
+            <circle cx="72" cy="62" r="16" fill="none" stroke="#F59E0B" stroke-width="2" stroke-dasharray="3 3" opacity="${gridSplit}" />
+          </g>
+
+          <!-- PatchEmbed 8x8 = 64 tokens grid visual -->
+          <g transform="translate(540, 280)" opacity="${gridSplit}">
+            <rect width="90" height="110" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+            <text x="45" y="20" text-anchor="middle" font-size="10" font-weight="700" fill="#64748B">PatchEmbed</text>
+            <!-- 8x8 grid dots -->
+            <g transform="translate(15, 30)">
+              ${Array.from({length: 64}).map((_, i) => {
+                const rx = (i % 8) * 8;
+                const ry = Math.floor(i / 8) * 8;
+                return `<rect x="${rx}" y="${ry}" width="6" height="6" rx="1" fill="#0EA5E9" />`;
+              }).join('')}
+            </g>
+            <text x="45" y="102" text-anchor="middle" font-size="9" font-weight="600" fill="#0284C7">64 tokens</text>
+          </g>
+
+          <!-- 2. Inverse Dynamics (IDM) Trapezoid -->
+          <path d="M 650 260 L 800 290 L 800 380 L 650 410 Z" fill="url(#gradOnline)" stroke="#0064E0" stroke-width="2" />
+          <text x="720" y="330" text-anchor="middle" font-size="12" font-weight="800" fill="#0064E0">Inverse Model</text>
+          <text x="720" y="348" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">E_IDM (STBlocks)</text>
+          <text x="720" y="365" text-anchor="middle" font-size="9" font-weight="600" fill="#475569">Δh = h_{t+1} - h_t</text>
+
+          <!-- Spatial Motion Attention Pool to u_t -->
+          <circle cx="${lerp(800, 930, uProgress)}" cy="${lerp(335, 155, uProgress)}" r="10" fill="#F97316" stroke="#FFFFFF" stroke-width="2" filter="url(#glowOrange)" />
+          <text x="860" y="325" font-size="11" font-weight="800" fill="#D97706">u_t (motion)</text>
+
+          <!-- Arrow connecting to Cosine VQ codebook slot 6 -->
+          <path d="M 800 335 Q 880 300 970 185" fill="none" stroke="#F97316" stroke-width="2.5" stroke-dasharray="5 3" marker-end="url(#arrow-orange)" />
+
+          <!-- 3. Forward Decoder (FDM) Trapezoid -->
+          <g transform="translate(1000, 260)" opacity="${clamp((relT - 6.5) / 1.0, 0, 1)}">
+            <path d="M 0 30 L 140 0 L 140 160 L 0 130 Z" fill="#F0FDF4" stroke="#059669" stroke-width="2" />
+            <text x="70" y="75" text-anchor="middle" font-size="12" font-weight="800" fill="#059669">Forward</text>
+            <text x="70" y="92" text-anchor="middle" font-size="12" font-weight="800" fill="#059669">Decoder</text>
+            <text x="70" y="110" text-anchor="middle" font-size="9" font-weight="600" fill="#047857">D_FDM</text>
+          </g>
+
+          <!-- Colored thread from Slot 6 (Teal, x=1056, y=178) to Decoder -->
+          <path d="M 1056 178 Q 1060 210 1060 260" fill="none" stroke="#14B8A6" stroke-width="3" marker-end="url(#arrow-blue)" />
+          <text x="1070" y="235" font-size="11" font-weight="800" fill="#0D9488">code k=6</text>
+
+          <!-- Output Reconstructed Frame x_hat_{t+1} -->
+          <g transform="translate(1180, 280)" opacity="${clamp((relT - 8.5) / 1.0, 0, 1)}">
+            <rect width="130" height="110" rx="10" fill="#F0FDF4" stroke="#059669" stroke-width="2" />
+            <text x="65" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#059669">Recon x̂_{t+1}</text>
+            <rect x="15" y="35" width="100" height="60" rx="4" fill="#D1FAE5" stroke="#059669" stroke-width="1" />
+            <rect x="65" y="55" width="14" height="14" rx="3" fill="#EF4444" />
+          </g>
+
+          <!-- Motion-Weighted MSE Loss indicator -->
+          <g transform="translate(1340, 310)" opacity="${clamp((relT - 9.5) / 1.0, 0, 1)}">
+            <rect width="180" height="60" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5" />
+            <text x="90" y="26" text-anchor="middle" font-size="11" font-weight="800" fill="#B91C1C">Stage 1 Objective</text>
+            <text x="90" y="44" text-anchor="middle" font-size="10" font-weight="600" fill="#DC2626">w·||x̂_{t+1} - x_{t+1}||² + L_ent</text>
+          </g>
+        </g>
+      `;
+    }
+
+    /* =========================================================================
+       SCENE 2: STAGE 2 — JEPA WORLD MODEL & SIGReg (21 to 39s)
+       ========================================================================= */
+    function renderScene2_JEPA(t) {
+      const relT = t - 21.0; // 0 to 18.0s
+      const enterStage = clamp(relT / 0.6, 0, 1);
+
+      // Sub-sequence for SIGReg comparison from relT 11.5s to 18s
+      const isSIGRegFocus = (relT >= 11.0);
+      const mainOpacity = isSIGRegFocus ? 0.25 : 1.0;
+
+      let html = `<g opacity="${enterStage}">`;
+
+      // Stage Title
+      html += `
+        <rect x="220" y="200" width="1160" height="42" rx="10" fill="#EFF6FF" stroke="#0064E0" stroke-width="1.5" />
+        <text x="240" y="226" font-size="13" font-weight="800" fill="#0064E0">STAGE 2: ISOTROPIC JEPA WORLD MODEL — LATENT PREDICTION + SIGReg</text>
+        <text x="1350" y="226" text-anchor="end" font-size="12" font-weight="600" fill="#1D4ED8">Frozen LAM (0% Real Labels)</text>
+      `;
+
+      // Main Architecture view
+      html += `<g opacity="${mainOpacity}" transition="opacity 0.3s">`;
+
+      // Frozen LAM badge
+      html += `
+        <g transform="translate(100, 260)">
+          <rect width="110" height="65" rx="8" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" />
+          <text x="55" y="26" text-anchor="middle" font-size="16">🔒</text>
+          <text x="55" y="44" text-anchor="middle" font-size="11" font-weight="700" fill="#334155">LAM Frozen</text>
+          <text x="55" y="56" text-anchor="middle" font-size="9" fill="#64748B">outputs code k_t</text>
+        </g>
+      `;
+
+      // Frame x_t -> Online ViT-S/8
+      html += `
+        <g transform="translate(240, 260)">
+          <rect width="100" height="70" rx="8" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+          <text x="50" y="32" text-anchor="middle" font-size="12" font-weight="700" fill="#0064E0">Frame x_t</text>
+          <text x="50" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">RGB 64×64</text>
+        </g>
+        <path d="M 340 295 L 390 295" stroke="#0064E0" stroke-width="2" marker-end="url(#arrow-blue)" />
+
+        <!-- Online ViT-S/8 Trapezoid -->
+        <path d="M 390 260 L 510 275 L 510 325 L 390 340 Z" fill="url(#gradOnline)" stroke="#0064E0" stroke-width="2" />
+        <text x="450" y="295" text-anchor="middle" font-size="11" font-weight="800" fill="#0064E0">Online ViT</text>
+        <text x="450" y="312" text-anchor="middle" font-size="9" font-weight="600" fill="#1D4ED8">f_θ (trained)</text>
+
+        <!-- 64 Online Tokens z_t -->
+        <g transform="translate(530, 275)">
+          <rect width="70" height="50" rx="6" fill="#FFFFFF" stroke="#0064E0" stroke-width="1.5" />
+          <text x="35" y="22" text-anchor="middle" font-size="11" font-weight="800" fill="#0064E0">z_t</text>
+          <text x="35" y="38" text-anchor="middle" font-size="8.5" font-weight="600" fill="#64748B">64×192</text>
+        </g>
+      `;
+
+      // Target Frame x_{t+1} -> Target ViT-S/8 (EMA, stop-grad)
+      html += `
+        <g transform="translate(240, 360)">
+          <rect width="100" height="70" rx="8" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" />
+          <text x="50" y="32" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">Next x_{t+1}</text>
+          <text x="50" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#64748B">Future</text>
+        </g>
+        <path d="M 340 395 L 390 395" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arrow-gray)" />
+
+        <!-- Target ViT Trapezoid (gray) -->
+        <path d="M 390 365 L 510 380 L 510 420 L 390 435 Z" fill="url(#gradTarget)" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" />
+        <text x="450" y="396" text-anchor="middle" font-size="11" font-weight="800" fill="#475569">Target ViT</text>
+        <text x="450" y="412" text-anchor="middle" font-size="8.5" font-weight="600" fill="#64748B">f_θ̄ (EMA stop-grad)</text>
+
+        <!-- Target Tokens z_{t+1} -->
+        <g transform="translate(530, 375)">
+          <rect width="70" height="50" rx="6" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5" />
+          <text x="35" y="22" text-anchor="middle" font-size="11" font-weight="800" fill="#475569">z_{t+1}^tgt</text>
+          <text x="35" y="38" text-anchor="middle" font-size="8.5" font-weight="600" fill="#64748B">sg[target]</text>
+        </g>
+      `;
+
+      // Action Embedding Table E_a adding to z_t
+      html += `
+        <g transform="translate(620, 240)">
+          <rect width="90" height="85" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5" />
+          <text x="45" y="20" text-anchor="middle" font-size="10" font-weight="800" fill="#B45309">E_a Table</text>
+          <!-- 8 slot color bars -->
+          ${CODE_COLORS.map((col, idx) => {
+            const isSel = (idx === 6);
+            return `<rect x="10" y="${28 + idx * 6}" width="70" height="4" rx="2" fill="${col}" stroke="${isSel ? '#000' : 'none'}" stroke-width="1" />`;
+          }).join('')}
+          <text x="45" y="80" text-anchor="middle" font-size="9" font-weight="700" fill="#D97706">+ E_a(k_t)</text>
+        </g>
+        <path d="M 665 325 L 665 345" stroke="#F59E0B" stroke-width="2" marker-end="url(#arrow-orange)" />
+      `;
+
+      // Causal Predictor g_psi
+      html += `
+        <g transform="translate(730, 270)">
+          <path d="M 0 20 L 130 0 L 130 110 L 0 90 Z" fill="url(#gradPredictor)" stroke="#059669" stroke-width="2" />
+          <text x="65" y="50" text-anchor="middle" font-size="12" font-weight="800" fill="#047857">Causal</text>
+          <text x="65" y="68" text-anchor="middle" font-size="12" font-weight="800" fill="#047857">Predictor</text>
+          <text x="65" y="85" text-anchor="middle" font-size="9" font-weight="600" fill="#065F46">g_ψ (STBlocks)</text>
+        </g>
+
+        <!-- Predicted state ẑ_{t+1} -->
+        <g transform="translate(880, 290)">
+          <rect width="80" height="55" rx="6" fill="#ECFDF5" stroke="#059669" stroke-width="2" />
+          <text x="40" y="25" text-anchor="middle" font-size="13" font-weight="800" fill="#047857">ẑ_{t+1}</text>
+          <text x="40" y="42" text-anchor="middle" font-size="8.5" font-weight="600" fill="#065F46">predicted</text>
+        </g>
+
+        <!-- L1 Prediction Loss Box -->
+        <g transform="translate(980, 310)">
+          <rect width="130" height="65" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="2" />
+          <text x="65" y="28" text-anchor="middle" font-size="12" font-weight="800" fill="#B91C1C">L1 Loss</text>
+          <text x="65" y="48" text-anchor="middle" font-size="10" font-weight="600" fill="#DC2626">||ẑ - sg[z^tgt]||₁</text>
+        </g>
+        <path d="M 960 315 L 980 330" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)" />
+        <path d="M 600 400 L 980 355" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arrow-gray)" />
+      `;
+
+      html += `</g>`; // End main view
+
+      // =====================================================================
+      // SUB-SCENE: SIGReg Anti-Collapse Interactive Demonstration (Adjustment)
+      // =====================================================================
+      if (isSIGRegFocus) {
+        const sigRegT = clamp((relT - 11.0) / 7.0, 0, 1);
+        html += `
+          <g transform="translate(300, 250)">
+            <rect width="1000" height="480" rx="18" fill="#FFFFFF" stroke="#7C3AED" stroke-width="2.5" filter="url(#softShadow)" />
+            <text x="500" y="40" text-anchor="middle" font-size="18" font-weight="800" fill="#6D28D9">★ Where SIGReg Acts & How It Prevents Representation Collapse</text>
+            <text x="500" y="66" text-anchor="middle" font-size="12.5" font-weight="500" fill="#4B5563">
+              Without regularizers, non-contrastive JEPAs suffer dimensional collapse. SIGReg (LeJEPA 2025) enforces Gaussian isotropy.
+            </text>
+
+            <!-- LEFT: Without Regularization (Collapse) -->
+            <g transform="translate(80, 95)">
+              <rect width="380" height="340" rx="12" fill="#FEF2F2" stroke="#F87171" stroke-width="1.5" />
+              <text x="190" y="30" text-anchor="middle" font-size="13" font-weight="800" fill="#991B1B">WITHOUT SIGReg: Trivial Collapse</text>
+              <circle cx="190" cy="180" r="${lerp(90, 4, easeOutCubic(sigRegT))}" fill="#FCA5A5" fill-opacity="0.25" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="4 2" />
+              
+              <!-- Simulating points collapsing to a single dot -->
+              ${Array.from({length: 24}).map((_, idx) => {
+                const angle = (idx / 24) * 2 * Math.PI;
+                const r = lerp(75 * Math.sin(idx * 7), 2, easeOutCubic(sigRegT));
+                const px = 190 + r * Math.cos(angle);
+                const py = 180 + r * Math.sin(angle);
+                return `<circle cx="${px}" cy="${py}" r="3.5" fill="#DC2626" />`;
+              }).join('')}
+
+              <text x="190" y="305" text-anchor="middle" font-size="12" font-weight="700" fill="#B91C1C">
+                Effective Rank: ${lerp(35, 1.0, sigRegT).toFixed(1)} / 192 (COLLAPSED)
+              </text>
+            </g>
+
+            <!-- RIGHT: With SIGReg (Cramér-Wold + Epps-Pulley) -->
+            <g transform="translate(540, 95)">
+              <rect width="380" height="340" rx="12" fill="#FAF5FF" stroke="#A855F7" stroke-width="2" />
+              <text x="190" y="30" text-anchor="middle" font-size="13" font-weight="800" fill="#6B21A8">WITH SIGReg: Isotropic Gaussian Sphere</text>
+              
+              <!-- Stable Gaussian sphere -->
+              <circle cx="190" cy="180" r="85" fill="#E9D5FF" fill-opacity="0.3" stroke="#8B5CF6" stroke-width="1.5" />
+              
+              <!-- 1D random projection axis line (Cramér-Wold) -->
+              <line x1="80" y1="120" x2="300" y2="240" stroke="#7C3AED" stroke-width="2" stroke-dasharray="5 3" />
+              <text x="290" y="255" font-size="10.5" font-weight="700" fill="#7C3AED">1D projection u^(m)</text>
+
+              <!-- Dispersed healthy tokens -->
+              ${Array.from({length: 24}).map((_, idx) => {
+                const angle = (idx / 24) * 2 * Math.PI + Math.sin(idx);
+                const r = 35 + (idx * 11) % 45;
+                const px = 190 + r * Math.cos(angle);
+                const py = 180 + r * Math.sin(angle);
+                return `<circle cx="${px}" cy="${py}" r="4" fill="#7C3AED" />`;
+              }).join('')}
+
+              <text x="190" y="305" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">
+                Effective Rank: 39.1 / 192 (Stable Isotropic)
+              </text>
+            </g>
+          </g>
+        `;
+      }
+
+      html += `</g>`;
+      return html;
+    }
+
+    /* =========================================================================
+       SCENE 3: STAGE 3 — FEW-SHOT ACTION ALIGNMENT (39 to 50s)
+       ========================================================================= */
+    function renderScene3_Alignment(t) {
+      const relT = t - 39.0; // 0 to 11.0s
+      const enterStage = clamp(relT / 0.6, 0, 1);
+      const connProgress = clamp((relT - 3.0) / 4.0, 0, 1);
+
+      let html = `<g opacity="${enterStage}">`;
+
+      html += `
+        <rect x="220" y="200" width="1160" height="42" rx="10" fill="#ECFDF5" stroke="#059669" stroke-width="1.5" />
+        <text x="240" y="226" font-size="13" font-weight="800" fill="#065F46">STAGE 3: FEW-SHOT ACTION ALIGNMENT — TRANSLATING CODES TO BUTTONS</text>
+        <text x="1350" y="226" text-anchor="end" font-size="12" font-weight="700" fill="#059669">0.1% – 10% Labelled Frames Only</text>
+      `;
+
+      // Visual filmstrip comparison: 99.9% unlabelled vs 0.1%-10% labelled
+      html += `
+        <g transform="translate(240, 260)">
+          <rect width="1120" height="48" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5" />
+          <text x="15" y="28" font-size="11" font-weight="700" fill="#475569">Video dataset:</text>
+          ${Array.from({length: 42}).map((_, i) => {
+            const isLabelled = (i === 12 || i === 28 || i === 35);
+            return `<rect x="${110 + i * 23}" y="12" width="16" height="24" rx="2" fill="${isLabelled ? '#10B981' : '#CBD5E1'}" stroke="${isLabelled ? '#047857' : 'none'}" stroke-width="${isLabelled ? '1.5' : '0'}" />`;
+          }).join('')}
+          <text x="1090" y="29" text-anchor="end" font-size="11" font-weight="700" fill="#059669">Green = labelled subset (1%)</text>
+        </g>
+      `;
+
+      // Frozen models on left
+      html += `
+        <g transform="translate(240, 330)">
+          <rect width="160" height="100" rx="10" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 2" />
+          <text x="80" y="32" text-anchor="middle" font-size="18">🔒</text>
+          <text x="80" y="54" text-anchor="middle" font-size="12" font-weight="800" fill="#334155">LAM + JEPA</text>
+          <text x="80" y="72" text-anchor="middle" font-size="10" font-weight="600" fill="#64748B">100% Frozen</text>
+          <text x="80" y="88" text-anchor="middle" font-size="9" fill="#94A3B8">Weights unmodifiable</text>
+        </g>
+      `;
+
+      // Inputs to probe: latent code k_t (orange) and scene context z_bar_t
+      html += `
+        <g transform="translate(430, 340)">
+          <rect width="120" height="40" rx="6" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2" />
+          <text x="60" y="25" text-anchor="middle" font-size="11" font-weight="800" fill="#B45309">code k_t ∈ {0..7}</text>
+
+          <rect y="50" width="120" height="40" rx="6" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+          <text x="60" y="75" text-anchor="middle" font-size="11" font-weight="800" fill="#0064E0">context z̄_t (192-d)</text>
+        </g>
+        <path d="M 550 385 L 610 385" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)" />
+      `;
+
+      // Lightweight 2-layer MLP Probe Box
+      html += `
+        <g transform="translate(610, 330)">
+          <rect width="210" height="110" rx="12" fill="#ECFDF5" stroke="#059669" stroke-width="2.5" filter="url(#softShadow)" />
+          <text x="105" y="32" text-anchor="middle" font-size="13" font-weight="800" fill="#065F46">ActionAlignment Probe</text>
+          <text x="105" y="52" text-anchor="middle" font-size="10.5" font-weight="600" fill="#047857">2-Layer MLP (1.6K–27K params)</text>
+          <text x="105" y="72" text-anchor="middle" font-size="9.5" fill="#334155">log P_φ(a | k_t, z̄_t)</text>
+          <text x="105" y="94" text-anchor="middle" font-size="9.5" font-weight="700" fill="#059669">+ 0.5·log P(a) prior correction</text>
+        </g>
+      `;
+
+      // Bipartite mapping lines from 8 latent codes to 17 Crafter buttons (Adjustment B)
+      const actions = [
+        "move_left", "move_right", "move_up", "move_down", "do", "sleep", "place_stone", "make_wood_pick"
+      ];
+      html += `
+        <g transform="translate(870, 310)">
+          <rect width="490" height="380" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#softShadow)" />
+          <text x="245" y="30" text-anchor="middle" font-size="13" font-weight="800" fill="#0F172A">Mapping 8 Latent Codes → 17 Real Crafter Buttons</text>
+
+          <!-- 8 Slots on left of bipartite graph -->
+          ${Array.from({length: 8}).map((_, k) => {
+            const ky = 60 + k * 36;
+            return `
+              <circle cx="50" cy="${ky}" r="12" fill="${CODE_COLORS[k]}" stroke="#0F172A" stroke-width="1.5" />
+              <text x="50" y="${ky + 4}" text-anchor="middle" font-size="10" font-weight="800" fill="#0F172A">k=${k}</text>
+            `;
+          }).join('')}
+
+          <!-- Crafter button targets on right -->
+          ${actions.map((act, aIdx) => {
+            const ay = 60 + aIdx * 36;
+            const isMovement = (aIdx < 4);
+            return `
+              <rect x="310" y="${ay - 12}" width="150" height="25" rx="6" fill="${isMovement ? '#ECFDF5' : '#F8FAFC'}" stroke="${isMovement ? '#10B981' : '#CBD5E1'}" stroke-width="1.5" />
+              <text x="385" y="${ay + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="${isMovement ? '#047857' : '#475569'}">${act}</text>
+            `;
+          }).join('')}
+
+          <!-- Animated Connection Lines (Crystallizing with labels) -->
+          <g opacity="${connProgress}">
+            <!-- Code 6 (locomotion 95.6%) -> move_left / right / up / down -->
+            <path d="M 62 276 L 310 60" stroke="#14B8A6" stroke-width="2.5" opacity="0.8" />
+            <path d="M 62 276 L 310 96" stroke="#14B8A6" stroke-width="2.5" opacity="0.8" />
+            <path d="M 62 276 L 310 132" stroke="#14B8A6" stroke-width="3" opacity="0.9" />
+            <path d="M 62 276 L 310 168" stroke="#14B8A6" stroke-width="2.5" opacity="0.8" />
+            
+            <!-- Code 1 -> sleep -->
+            <path d="M 62 96 L 310 240" stroke="#0EA5E9" stroke-width="2.5" opacity="0.85" />
+
+            <!-- Code 0 -> do -->
+            <path d="M 62 60 L 310 204" stroke="#F97316" stroke-width="2" opacity="0.75" />
+          </g>
+
+          <!-- Accuracy Meter Stamp -->
+          <g transform="translate(130, 310)">
+            <rect width="230" height="50" rx="10" fill="#ECFDF5" stroke="#059669" stroke-width="2" />
+            <text x="115" y="24" text-anchor="middle" font-size="13" font-weight="800" fill="#047857">44.7% Alignment Accuracy</text>
+            <text x="115" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#065F46">Saturates with only ~1% labels (Crafter)</text>
+          </g>
+        </g>
+      `;
+
+      html += `</g>`;
+      return html;
+    }
+
+    /* =========================================================================
+       SCENE 4: STAGE 4 — LATENT CEM PLANNING & CLOSED-LOOP MPC (50 to 73s)
+       ========================================================================= */
+    function renderScene4_Planning(t) {
+      const relT = t - 50.0; // 0 to 23.0s
+      const enterStage = clamp(relT / 0.6, 0, 1);
+
+      // Simulation of 3 receding-horizon closed-loop environment steps
+      const cycleTime = 6.0;
+      const mpcCycle = Math.min(2, Math.floor(relT / cycleTime));
+      const cycleT = (relT % cycleTime) / cycleTime; // 0 to 1 inside current MPC step
+
+      // Elite refinement level (CEM iterations 1..4)
+      const cemIter = Math.min(4, Math.floor(cycleT * 4) + 1);
+
+      let html = `<g opacity="${enterStage}">`;
+
+      html += `
+        <rect x="220" y="200" width="1160" height="42" rx="10" fill="#F0FDF4" stroke="#16A34A" stroke-width="1.5" />
+        <text x="240" y="226" font-size="13" font-weight="800" fill="#14532d">STAGE 4: CLOSED-LOOP LATENT PLANNING (CEM + MPC) — ALL WEIGHTS FROZEN</text>
+        <rect x="1130" y="208" width="230" height="26" rx="6" fill="#DC2626" />
+        <text x="1245" y="225" text-anchor="middle" font-size="11" font-weight="800" fill="#FFFFFF">LAM NOT NEEDED AT TEST TIME</text>
+      `;
+
+      // 1. Dual inputs: Live observation x_t & Target goal x_goal
+      html += `
+        <g transform="translate(180, 260)">
+          <!-- Live frame -->
+          <rect width="130" height="85" rx="8" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+          <text x="65" y="22" text-anchor="middle" font-size="11" font-weight="700" fill="#0064E0">Live Frame x_t</text>
+          <rect x="15" y="30" width="100" height="45" rx="4" fill="#D1FAE5" />
+          <!-- Agent stepping closer to goal across MPC steps -->
+          <rect x="${30 + mpcCycle * 25}" y="45" width="12" height="12" rx="2" fill="#EF4444" />
+
+          <!-- Target goal image -->
+          <g transform="translate(0, 100)">
+            <rect width="130" height="85" rx="8" fill="#FFFBEB" stroke="#D97706" stroke-width="2" />
+            <text x="65" y="22" text-anchor="middle" font-size="11" font-weight="700" fill="#D97706">Goal Target x_goal</text>
+            <rect x="15" y="30" width="100" height="45" rx="4" fill="#D1FAE5" />
+            <rect x="85" y="45" width="12" height="12" rx="2" fill="#059669" />
+            <text x="91" y="55" text-anchor="middle" font-size="12">🎯</text>
+          </g>
+        </g>
+      `;
+
+      // 2. Frozen Encoder mapping to z_t and z_goal
+      html += `
+        <g transform="translate(350, 320)">
+          <path d="M 0 0 L 80 15 L 80 75 L 0 90 Z" fill="url(#gradTarget)" stroke="#475569" stroke-width="2" stroke-dasharray="4 2" />
+          <text x="40" y="42" text-anchor="middle" font-size="11" font-weight="800" fill="#334155">ViT-S/8</text>
+          <text x="40" y="58" text-anchor="middle" font-size="9" fill="#64748B">f_θ (frozen)</text>
+        </g>
+      `;
+
+      // 3. CEM Imagination Tree in Latent Space (Fan of 128 rollouts over 8 codes)
+      html += `
+        <g transform="translate(480, 270)">
+          <rect width="470" height="400" rx="14" fill="#FFFFFF" stroke="#059669" stroke-width="2" filter="url(#softShadow)" />
+          <text x="235" y="28" text-anchor="middle" font-size="13" font-weight="800" fill="#065F46">CEM Latent Imagination (128 rollouts × H=6 steps)</text>
+          <text x="235" y="46" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">Refining Elites: Iteration ${cemIter} / 4</text>
+
+          <!-- Starting latent state z_t -->
+          <circle cx="50" cy="200" r="14" fill="#0064E0" stroke="#FFFFFF" stroke-width="2" />
+          <text x="50" y="204" text-anchor="middle" font-size="10" font-weight="800" fill="#FFFFFF">z_t</text>
+
+          <!-- Target state z_goal on right -->
+          <circle cx="420" cy="200" r="16" fill="#059669" stroke="#FFFFFF" stroke-width="2" filter="url(#glowBlue)" />
+          <text x="420" y="205" text-anchor="middle" font-size="10" font-weight="800" fill="#FFFFFF">z_goal</text>
+
+          <!-- Trajectory candidate branches -->
+          ${Array.from({length: 16}).map((_, i) => {
+            const spread = (i - 7.5) * (18 / (cemIter * 0.8));
+            const endY = 200 + spread;
+            const isElite = Math.abs(spread) < 25;
+            const op = isElite ? 0.9 : Math.max(0.08, 0.5 - cemIter * 0.12);
+
+            // Path curve with 6 step dots in code colors
+            return `
+              <path d="M 50 200 Q 230 ${200 + spread * 0.6} 410 ${endY}" fill="none" stroke="${isElite ? '#059669' : '#94A3B8'}" stroke-width="${isElite ? '2.5' : '1'}" opacity="${op}" />
+              <!-- Dots along path -->
+              ${[1, 2, 3, 4, 5].map(step => {
+                const px = 50 + step * 60;
+                const py = 200 + (spread * (step / 6));
+                const dotCol = CODE_COLORS[(i + step) % 8];
+                return `<circle cx="${px}" cy="${py}" r="${isElite ? 4 : 2}" fill="${dotCol}" opacity="${op}" />`;
+              }).join('')}
+            `;
+          }).join('')}
+
+          <text x="235" y="380" text-anchor="middle" font-size="11" font-weight="700" fill="#059669">Top-16 Elites converge toward z_goal</text>
+        </g>
+      `;
+
+      // 4. Output best immediate code k_0* -> ActionAlignment Probe -> Game Environment
+      html += `
+        <g transform="translate(980, 320)">
+          <!-- Best code k_0* chip -->
+          <rect width="110" height="45" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2.5" filter="url(#glowOrange)" />
+          <text x="55" y="24" text-anchor="middle" font-size="12" font-weight="800" fill="#B45309">best code k_0*</text>
+          <text x="55" y="38" text-anchor="middle" font-size="10" font-weight="700" fill="#D97706">= Slot 6</text>
+
+          <path d="M 110 22 L 150 22" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow-green)" />
+
+          <!-- Probe translator -->
+          <g transform="translate(150, -10)">
+            <rect width="160" height="65" rx="8" fill="#ECFDF5" stroke="#059669" stroke-width="2" />
+            <text x="80" y="26" text-anchor="middle" font-size="11" font-weight="800" fill="#047857">ActionAlignment</text>
+            <text x="80" y="44" text-anchor="middle" font-size="12" font-weight="800" fill="#065F46">→ real action a_t</text>
+          </g>
+
+          <!-- Environment feedback loop arrow -->
+          <path d="M 230 65 Q 230 180 -600 180 Q -800 180 -800 30" fill="none" stroke="#0064E0" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#arrow-blue)" />
+          <text x="-150" y="172" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0064E0">Receding Horizon: execute a_t in Crafter → new x_{t+1} → re-plan</text>
+        </g>
+      `;
+
+      // Goal reached celebration at end of phase
+      if (relT > 17.0) {
+        html += `
+          <g transform="translate(800, 720)">
+            <rect x="-180" y="-22" width="360" height="44" rx="22" fill="#ECFDF5" stroke="#059669" stroke-width="2" filter="url(#softShadow)" />
+            <text x="0" y="6" text-anchor="middle" font-size="14" font-weight="800" fill="#047857">✓ GOAL REACHED IN 6 LATENT STEPS!</text>
+          </g>
+        `;
+      }
+
+      html += `</g>`;
+      return html;
+    }
+
+    /* =========================================================================
+       SCENE 5: EXPERIMENTAL RESULTS WITH HONESTY (73 to 81s)
+       ========================================================================= */
+    function renderScene5_Results(t) {
+      const relT = t - 73.0;
+      const enter = clamp(relT / 0.6, 0, 1);
+
+      return `
+        <g opacity="${enter}">
+          <rect x="220" y="200" width="1160" height="42" rx="10" fill="#EFF6FF" stroke="#0064E0" stroke-width="1.5" />
+          <text x="240" y="226" font-size="13" font-weight="800" fill="#0064E0">KEY EXPERIMENTAL FINDINGS (A100-TESTED ON CRAFTER & TOYGRID)</text>
+          <text x="1350" y="226" text-anchor="end" font-size="12" font-weight="600" fill="#1D4ED8">Calibrated Empirical Evaluation</text>
+
+          <!-- 3 Large Stat Cards -->
+          <!-- Card 1 -->
+          <g transform="translate(240, 260)">
+            <rect width="340" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />
+            <circle cx="50" cy="50" r="22" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2" />
+            <text x="50" y="56" text-anchor="middle" font-size="16">🎲</text>
+            <text x="90" y="45" font-size="13" font-weight="700" fill="#64748B">UNSUPERVISED LAM</text>
+            <text x="90" y="65" font-size="20" font-weight="800" fill="#B45309">8 / 8 Active Codes</text>
+            
+            <line x1="20" y1="90" x2="320" y2="90" stroke="#F1F5F9" stroke-width="1.5" />
+            <text x="20" y="120" font-size="12" font-weight="600" fill="#334155">• +10.05 dB controllability gain on Crafter</text>
+            <text x="20" y="145" font-size="12" font-weight="600" fill="#334155">• 95.6% pure locomotion in Code 6</text>
+            <text x="20" y="170" font-size="12" font-weight="600" fill="#334155">• Autonomous separation of motion vs noop</text>
+            <text x="20" y="200" font-size="11" font-weight="500" fill="#64748B">Entropy reg prevents single-code collapse</text>
+          </g>
+
+          <!-- Card 2 -->
+          <g transform="translate(630, 260)">
+            <rect width="340" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />
+            <circle cx="50" cy="50" r="22" fill="#ECFDF5" stroke="#10B981" stroke-width="2" />
+            <text x="50" y="56" text-anchor="middle" font-size="16">🏷️</text>
+            <text x="90" y="45" font-size="13" font-weight="700" fill="#64748B">LABEL EFFICIENCY</text>
+            <text x="90" y="65" font-size="20" font-weight="800" fill="#047857">Saturates at ~1%</text>
+
+            <line x1="20" y1="90" x2="320" y2="90" stroke="#F1F5F9" stroke-width="1.5" />
+            <text x="20" y="120" font-size="12" font-weight="600" fill="#334155">• 44.7% accuracy with only ~2.6k labels</text>
+            <text x="20" y="145" font-size="12" font-weight="600" fill="#334155">• 45.6% accuracy with 10% labels</text>
+            <text x="20" y="170" font-size="12" font-weight="600" fill="#334155">• Tiny 1.6K–27K parameter MLP probe</text>
+            <text x="20" y="200" font-size="11" font-weight="500" fill="#64748B">Log-prior correction resolves class skew</text>
+          </g>
+
+          <!-- Card 3 -->
+          <g transform="translate(1020, 260)">
+            <rect width="340" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" filter="url(#softShadow)" />
+            <circle cx="50" cy="50" r="22" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+            <text x="50" y="56" text-anchor="middle" font-size="16">🎯</text>
+            <text x="90" y="45" font-size="13" font-weight="700" fill="#64748B">CLOSED-LOOP PLANNING</text>
+            <text x="90" y="65" font-size="20" font-weight="800" fill="#0064E0">14.4% vs 6.7% Random</text>
+
+            <line x1="20" y1="90" x2="320" y2="90" stroke="#F1F5F9" stroke-width="1.5" />
+            <text x="20" y="120" font-size="12" font-weight="600" fill="#334155">• Matches 100% Action Oracle (10.0%)</text>
+            <text x="20" y="145" font-size="12" font-weight="600" fill="#334155">• Zero-shot VoE anomaly AUROC: 0.8712</text>
+            <text x="20" y="170" font-size="12" font-weight="600" fill="#334155">• 15.25× surprise on teleportation</text>
+            <text x="20" y="200" font-size="11" font-weight="500" fill="#64748B">52.91× surprise on sudden disappearance</text>
+          </g>
+
+          <!-- Honest Statistical Disclaimer Card -->
+          <g transform="translate(240, 520)">
+            <rect width="1120" height="85" rx="12" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+            <text x="30" y="32" font-size="12" font-weight="800" fill="#475569">⚖️ Methodological & Statistical Note:</text>
+            <text x="30" y="54" font-size="12" font-weight="500" fill="#475569">
+              Closed-loop planning is evaluated on 25–30 stochastic episodes across 3 random seeds (standard deviation ±1.6% to ±10.3%).
+            </text>
+            <text x="30" y="72" font-size="12" font-weight="500" fill="#64748B">
+              Differences between 1%, 10% and 100% supervision are within sampling noise. The solid scientific finding is achieving parity with 99% fewer labels.
+            </text>
+          </g>
+        </g>
+      `;
+    }
+
+    /* =========================================================================
+       SCENE 6: SUMMARY PIPELINE & LOOP FADE (81 to 87s)
+       ========================================================================= */
+    function renderScene6_Summary(t) {
+      const relT = t - 81.0;
+      const enter = clamp(relT / 0.6, 0, 1) * clamp((87.0 - t) / 0.8, 0, 1);
+
+      return `
+        <g opacity="${enter}">
+          <rect x="180" y="220" width="1240" height="420" rx="20" fill="#FFFFFF" stroke="#0064E0" stroke-width="2" filter="url(#softShadow)" />
+          
+          <text x="800" y="270" text-anchor="middle" font-size="24" font-weight="800" fill="#0F172A">The Complete 4-Stage latent-play Architecture</text>
+          <text x="800" y="296" text-anchor="middle" font-size="14" font-weight="500" fill="#64748B">Separating visual physics from controller semantics</text>
+
+          <!-- Horizontal pipeline boxes -->
+          <!-- S1 -->
+          <g transform="translate(220, 340)">
+            <rect width="250" height="180" rx="12" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2" />
+            <text x="125" y="32" text-anchor="middle" font-size="13" font-weight="800" fill="#B45309">1. Action Discovery (LAM)</text>
+            <text x="125" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#D97706">0% Action Labels</text>
+            <line x1="20" y1="65" x2="230" y2="65" stroke="#FDE68A" stroke-width="1.5" />
+            <text x="20" y="90" font-size="11" fill="#78350F">• IDM motion pool Δh_t</text>
+            <text x="20" y="112" font-size="11" fill="#78350F">• Cosine VQ (K=8 codes)</text>
+            <text x="20" y="134" font-size="11" fill="#78350F">• FDM pixel decoder</text>
+            <text x="20" y="156" font-size="11" font-weight="700" fill="#B45309">⚡ Trained from scratch</text>
+          </g>
+
+          <!-- S2 -->
+          <g transform="translate(510, 340)">
+            <rect width="250" height="180" rx="12" fill="#EFF6FF" stroke="#0064E0" stroke-width="2" />
+            <text x="125" y="32" text-anchor="middle" font-size="13" font-weight="800" fill="#0064E0">2. World Model (JEPA)</text>
+            <text x="125" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">0% Real Action Labels</text>
+            <line x1="20" y1="65" x2="230" y2="65" stroke="#BFDBFE" stroke-width="1.5" />
+            <text x="20" y="90" font-size="11" fill="#1E3A8A">• Online ViT-S/8 + EMA Target</text>
+            <text x="20" y="112" font-size="11" fill="#1E3A8A">• Causal ST-Predictor g_ψ</text>
+            <text x="20" y="134" font-size="11" fill="#1E3A8A">• SIGReg (Epps-Pulley isotropy)</text>
+            <text x="20" y="156" font-size="11" font-weight="700" fill="#0064E0">⚡ Trained on LAM codes</text>
+          </g>
+
+          <!-- S3 -->
+          <g transform="translate(800, 340)">
+            <rect width="250" height="180" rx="12" fill="#ECFDF5" stroke="#10B981" stroke-width="2" />
+            <text x="125" y="32" text-anchor="middle" font-size="13" font-weight="800" fill="#047857">3. Action Alignment</text>
+            <text x="125" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#059669">0.1% – 10% Labels</text>
+            <line x1="20" y1="65" x2="230" y2="65" stroke="#A7F3D0" stroke-width="1.5" />
+            <text x="20" y="90" font-size="11" fill="#064E3B">• 2-layer MLP probe</text>
+            <text x="20" y="112" font-size="11" fill="#064E3B">• Translates k_t → real buttons</text>
+            <text x="20" y="134" font-size="11" fill="#064E3B">• Log-prior class correction</text>
+            <text x="20" y="156" font-size="11" font-weight="700" fill="#047857">⚡ Trained (LAM/JEPA frozen)</text>
+          </g>
+
+          <!-- S4 -->
+          <g transform="translate(1090, 340)">
+            <rect width="250" height="180" rx="12" fill="#F8FAFC" stroke="#64748B" stroke-width="2" stroke-dasharray="4 2" />
+            <text x="125" y="32" text-anchor="middle" font-size="13" font-weight="800" fill="#334155">4. Latent Planning (CEM)</text>
+            <text x="125" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="#64748B">Test-Time Inference</text>
+            <line x1="20" y1="65" x2="230" y2="65" stroke="#E2E8F0" stroke-width="1.5" />
+            <text x="20" y="90" font-size="11" fill="#1E293B">• 128 rollouts × 6 steps</text>
+            <text x="20" y="112" font-size="11" fill="#1E293B">• Plans over 8 latent codes</text>
+            <text x="20" y="134" font-size="11" fill="#1E293B">• Receding-horizon MPC in game</text>
+            <text x="20" y="156" font-size="11" font-weight="700" fill="#64748B">🔒 All models frozen (No LAM)</text>
+          </g>
+
+          <text x="800" y="580" text-anchor="middle" font-size="13.5" font-weight="600" fill="#0064E0">Restarting animation in loop...</text>
+        </g>
+      `;
+    }
+
+    /* =========================================================================
+       ANIMATION MASTER LOOP (requestAnimationFrame)
+       ========================================================================= */
+    function animate(timestamp) {
+      if (lastTimestamp === null) lastTimestamp = timestamp;
+      const delta = (timestamp - lastTimestamp) / 1000;
+      lastTimestamp = timestamp;
+
+      if (isPlaying) {
+        currentTime += delta * playSpeed;
+        if (currentTime >= TOTAL_DURATION) {
+          currentTime = 0.0; // Loop continuously
+        }
+        render(currentTime);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    /* Player controls */
+    function togglePlayPause() {
+      isPlaying = !isPlaying;
+      document.getElementById("icon-play").style.display = isPlaying ? "none" : "block";
+      document.getElementById("icon-pause").style.display = isPlaying ? "block" : "none";
+    }
+
+    function seekTo(targetTime) {
+      currentTime = clamp(targetTime, 0, TOTAL_DURATION);
+      render(currentTime);
+    }
+
+    function setSpeed(sp) {
+      playSpeed = sp;
+      document.querySelectorAll(".btn-speed").forEach(b => b.classList.remove("active"));
+      if (sp === 0.5) document.getElementById("spd-05").classList.add("active");
+      if (sp === 1.0) document.getElementById("spd-10").classList.add("active");
+      if (sp === 2.0) document.getElementById("spd-20").classList.add("active");
+    }
+
+    /* Keyboard navigation */
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        e.preventDefault();
+        togglePlayPause();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        // Jump to previous scene
+        const prev = SCENES.slice().reverse().find(s => s.start < currentTime - 0.5);
+        if (prev) seekTo(prev.start);
+        else seekTo(0);
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        // Jump to next scene
+        const next = SCENES.find(s => s.start > currentTime + 0.2);
+        if (next) seekTo(next.start);
+      }
+    });
+
+    // Start player
+    initScrubber();
+    render(0);
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
