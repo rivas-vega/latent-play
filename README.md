@@ -10,14 +10,16 @@
 
 > **Research Question:** *Can a Joint-Embedding Predictive Architecture (JEPA) learn a controllable, non-collapsing world model purely from unlabelled gameplay video—and how few real action labels are needed to align its discovered latent actions for closed-loop planning?*
 
-> 💡 **Interactive Architecture Walkthrough:** Open [`docs/animation.html`](docs/animation.html) for an autonomous ~85-second visual presentation (pure HTML5 + SVG) animating the filmstrip data flow, the 8-slot action rack, SIGReg anti-collapse geometry, and latent CEM planning.
-
 <p align="center">
-  <img src="outputs/eval_planning/planned_trajectory_annotated.gif" width="760" alt="Annotated Closed-Loop Latent Planning in Crafter"/>
+  <a href="docs/animation.html">
+    <img src="docs/walkthrough_preview.png" width="820" alt="latent-play · visual walkthrough"/>
+  </a>
 </p>
 
 <p align="center">
-  <em><b>Closed-Loop Latent Planning in Crafter (Zero Pixel Reconstruction at Test Time):</b> Starting at tile <code>(32, 32)</code> (left), the agent observes live frames <code>x_t</code> and a target visual goal <code>x_goal</code> at tile <code>(35, 29)</code> (right). At every step, it encodes both into <code>ViT-S/8</code> representation space, rolls out 128 candidate 6-step trajectories over the 8 discovered latent codes using the Cross-Entropy Method (CEM), translates the best immediate code <code>k_0*</code> into a real Crafter control via a few-shot alignment probe, and reaches the goal in 6 steps.</em>
+  🎬 <b><a href="docs/animation.html">latent-play · Interactive Visual Walkthrough</a></b>
+  <br/>
+  <em>Autonomous step-by-step presentation (pure HTML5 + CSS + vanilla JS + SVG, ~80s) walking through all 4 stages: discovering discrete latent actions from unlabelled video, JEPA dynamics with SIGReg anti-collapse geometry, few-shot button alignment, and closed-loop CEM latent planning in Crafter. Open <a href="docs/animation.html"><code>docs/animation.html</code></a> in any browser.</em>
 </p>
 
 ---
