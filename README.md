@@ -35,68 +35,80 @@
 
 ---
 
-## 2. Architecture & Training Pipeline
-
-| Stage | Module | Input → Output | Trained Parameters | Loss / Objective |
-|---|---|---|---|---|
-| **1. Action Discovery** | `LAM` ([`lam.py`](latent_play/models/lam.py), [`vq.py`](latent_play/models/vq.py)) | $(x_t, x_{t+1}) \to k_t \in \{0..7\}$ + $\hat{x}_{t+1}$ | IDM + Cosine VQ ($K=8$) + FDM (`1.7M`–`7.7M`) | Pixel MSE + VQ commitment + entropy |
-| **2. World Model** | `JEPADynamics` ([`dynamics.py`](latent_play/models/dynamics.py), [`jepa.py`](latent_play/losses/jepa.py)) | $x_t$ + frozen code $k_t \to \hat{z}_{t+1}$ | Online `ViT-S/8` + Causal Predictor (`2.1M`–`14.8M`) | Latent $L_1$ to EMA target + SIGReg + VICReg hinge |
-| **3. Action Alignment** | `ActionAlignment` ([`alignment.py`](latent_play/planning/alignment.py)) | Code $k_t$ + pooled $\bar{z}_t \to P(a \mid k_t, \bar{z}_t)$ | 2-layer MLP probe (`1.6K`–`27K`, 1% labels) | Cross-entropy to real actions |
-| **4. Latent Planning** | `CEMPlanner` ([`cem.py`](latent_play/planning/cem.py)) | $(x_t, x_{\text{goal}}) \to$ executed action $\hat{a}_t$ | *None* (frozen test-time search over latent codes) | Min latent distance $\|\hat{z}_{t+H} - z_{\text{goal}}\|_1$ |
-
-<details>
-<summary><b>📐 View Mermaid Flowchart: Training Pipeline vs. Test-Time Inference</b></summary>
+## 2. Architecture & Pipeline
 
 ```mermaid
-flowchart TB
-    subgraph TRAIN["TRAINING PIPELINE (Stages 1–3)"]
-        direction LR
-        V[("Unlabelled Video<br/>(x_t, x_{t+1})")] --> LAM["Stage 1: LAM<br/>IDM + Cosine VQ (K=8) + FDM"]
-        LAM -- "inferred code k_t (0..7)" --> JEPA["Stage 2: JEPADynamics<br/>Online ViT-S/8 + Causal Predictor<br/>+ EMA Target + SIGReg"]
-        V --> JEPA
-        LAB[("0.1% – 10% Labelled Pairs<br/>(x_t, a_real)")] --> AL["Stage 3: ActionAlignment<br/>2-Layer MLP: (k_t, z̄_t) → a_real"]
-        LAM -- "k_t" --> AL
-        JEPA -- "scene context z̄_t" --> AL
+flowchart LR
+    subgraph S1 ["1. Action Discovery (0% Labels)"]
+        V[("Unlabelled Video<br/>(x_t, x_{t+1})")] --> LAM["LAM<br/>Inverse Model + Cosine VQ"]
     end
 
-    subgraph TEST["TEST-TIME INFERENCE (Stage 4 — All Weights Frozen, LAM Not Used)"]
-        direction LR
-        X["Live Frame x_t<br/>+ Goal Image x_goal"] --> ENC["Frozen ViT-S/8 Encoder<br/>→ z_t, z_goal"]
-        ENC --> CEM["Stage 4: CEM Planner<br/>128 rollouts × H=6 steps<br/>over 8 latent codes k"]
-        CEM -- "best first code k_0*" --> AL2["Frozen ActionAlignment<br/>+ Log-Prior Correction"]
-        AL2 -- "real action â_t" --> ENV["Game Environment<br/>(Crafter / ToyGrid)"]
-        ENV -- "next frame x_{t+1}" --> X
+    subgraph S2 ["2. World Model (0% Labels)"]
+        LAM -->|"8 discrete codes k_t"| JEPA["JEPADynamics<br/>ViT-S/8 + Predictor + SIGReg"]
     end
 
-    JEPA -. "frozen encoder f_θ" .-> ENC
-    JEPA -. "frozen predictor g_ψ" .-> CEM
-    AL -. "frozen probe P_φ" .-> AL2
+    subgraph S3 ["3. Action Alignment (1% Labels)"]
+        LAB[("1% Action Labels<br/>(x_t, a_real)")] --> AL["ActionAlignment<br/>2-Layer MLP Probe"]
+        JEPA -->|"scene context z̄_t"| AL
+    end
+
+    subgraph S4 ["4. Closed-Loop Planning (Inference — All Frozen)"]
+        X["Live x_t + Goal x_{goal}"] --> CEM["CEM Planner<br/>128 rollouts × H=6"]
+        JEPA -.->|"frozen dynamics"| CEM
+        CEM -->|"best code k_0*"| PROBE["Frozen Probe<br/>+ Log-Prior"]
+        AL -.->|"probe weights"| PROBE
+        PROBE -->|"real control â_t"| ENV["Crafter<br/>Environment"]
+    end
+
+    classDef stage1 fill:#EFF6FF,stroke:#3B82F6,stroke-width:1.5px,color:#1E3A8A;
+    classDef stage2 fill:#EEF2FF,stroke:#6366F1,stroke-width:1.5px,color:#312E81;
+    classDef stage3 fill:#ECFDF5,stroke:#10B981,stroke-width:1.5px,color:#064E3B;
+    classDef stage4 fill:#F8FAFC,stroke:#64748B,stroke-width:1.5px,color:#0F172A;
+    classDef data fill:#FFFFFF,stroke:#CBD5E1,stroke-width:1.5px,color:#334155;
+
+    class LAM stage1;
+    class JEPA stage2;
+    class AL stage3;
+    class CEM,PROBE,ENV stage4;
+    class V,LAB,X data;
 ```
 
+<details>
+<summary><b>Stage 1 · Latent Action Discovery (<code>LAM</code>)</b> — 0% labels, compresses video transitions into 8 discrete codes</summary>
+
+- **Module:** [`lam.py`](latent_play/models/lam.py), [`vq.py`](latent_play/models/vq.py) (`1.68M`–`7.65M` parameters).
+- **Input → Output:** Consecutive video frames $(x_t, x_{t+1}) \to$ discrete code $k_t \in \{0..7\}$ + reconstructed $\hat{x}_{t+1}$.
+- **Architecture:** Inverse Dynamics (`IDM`) encoder with 4 causal Spatio-Temporal (`STBlock`) layers, learned spatial motion-attention pooling, Cosine Vector Quantizer (`CosineVQ`), and motion-weighted Forward Dynamics (`FDM`) pixel decoder.
+- **Objective:** $\mathcal{L}_{\text{LAM}} = \mathcal{L}_{\text{pixel}} + \mathcal{L}_{\text{commit}} + \mathcal{L}_{\text{entropy}}$ (batch-mean centering $\tilde{u}_t = u_t - \bar{u}$ and differentiable batch-entropy regularization prevent codebook collapse, keeping all 8/8 codes active).
 </details>
 
 <details>
-<summary><b>🔬 View Technical Implementation & Loss Formulations</b></summary>
+<summary><b>Stage 2 · Non-Collapsing World Model (<code>JEPADynamics</code>)</b> — 0% labels, representation prediction with SIGReg</summary>
 
-#### Stage 1: Action Discovery & Anti-Collapse VQ
-- **Spatial Patch Tokenization (`PatchEmbed`):** Each $64\times 64$ RGB frame is split by a $8\times 8$ convolution (stride 8) into **$N_p = 64$ spatial patch tokens** of dimension $D$ ($D=128$ on ToyGrid, $D=256$ on Crafter) with 2D positional encodings.
-- **Inverse Dynamics & Motion Pooling:** Tokens pass through 4 causal Spatio-Temporal (`STBlock`) layers. To isolate controllable movement from static backgrounds, `LAM` computes the temporal feature difference $\Delta h_t = h_{t+1} - h_t$ and pools across the 64 patches using learned spatial motion attention to obtain a compact vector $u_t \in \mathbb{R}^{32}$.
-- **Anti-Collapse Cosine VQ ($K=8$):** Standard VQ bottlenecks often collapse to a single code on correlated video frames. We combine (1) batch-mean centering $\tilde{u}_t = u_t - \bar{u}$, (2) $\ell_2$-normalized cosine nearest-neighbor lookup $k_t = \arg\min_k \|\hat{u}_t - \hat{e}_k\|_2$, and (3) differentiable batch-entropy regularization $\mathcal{L}_{\text{ent}} = H(p \mid \tilde{u}_t) - H(\bar{p})$ so all $8/8$ codes remain active.
-- **Motion-Weighted Forward Decoder:** The decoder receives only the current frame $x_t$ and the quantized code $e_{k_t}$, predicting a pixel residual $\hat{x}_{t+1} = \text{clamp}(x_t + \Delta\hat{x}_t, 0, 1)$ weighted by local frame change $w = 1 + 10\|x_{t+1} - x_t\|_1$.
+- **Module:** [`dynamics.py`](latent_play/models/dynamics.py), [`jepa.py`](latent_play/losses/jepa.py) (`2.05M`–`14.8M` parameters).
+- **Input → Output:** Current frame $x_t$ + frozen `LAM` code $k_t \to$ predicted next latent representation $\hat{z}_{t+1} \in \mathbb{R}^{64\times D}$.
+- **Architecture:** Online `ViT-S/8` encoder $f_\theta$, action embedding table $E_a \in \mathbb{R}^{8\times D}$, 4–6 layer causal spatio-temporal predictor $g_\psi$, and target encoder $f_{\bar{\theta}}$ updated via Exponential Moving Average (EMA, $\tau \in [0.996, 1.0]$) with stop-gradient.
+- **Objective & Anti-Collapse:** Predicts representations directly without pixel reconstruction:
+  $$\mathcal{L}_{\text{JEPA}} = \|\hat{z}_{t+1} - \text{sg}[z_{t+1}^{\text{tgt}}]\|_1 + 0.05 \cdot \text{SIGReg}(z_t) + 0.02 \cdot \text{VICReg}_{\text{var}}(z_t)$$
+  `SIGReg` projects online representations onto $M=64$ random 1D unit directions via the **Epps-Pulley** characteristic test, driving representations to an isotropic Gaussian $\mathcal{N}(0, I_D)$ without $O(D^3)$ covariance inversion.
+</details>
 
-#### Stage 2: JEPA Dynamics & SIGReg Isotropy
-- **Online vs. Target Encoders:** The online encoder $f_\theta$ (`ViT-S/8`, $D=192$ on ToyGrid, $D=384$ on Crafter) maps $x_t$ to 64 patch tokens $z_t \in \mathbb{R}^{64\times D}$. The target encoder $f_{\bar{\theta}}$ maps $x_{t+1}$ to $z_{t+1}^{\text{tgt}} = \text{sg}[f_{\bar{\theta}}(x_{t+1})]$ with **stop-gradient** and Exponential Moving Average weight updates ($\bar{\theta} \leftarrow \tau\bar{\theta} + (1-\tau)\theta$, $\tau \in [0.996, 1.0]$).
-- **Where `SIGReg` and `VICReg` Act:** Both regularizers act **directly on the online encoder's representations $z_t$**:
-  - **SIGReg ($\lambda = 0.05$):** Projects the batch of online tokens onto $M=64$ random 1D unit directions $u^{(m)} \sim \mathbb{S}^{D-1}$ (Cramér-Wold theorem) and applies the univariate **Epps-Pulley** characteristic-function test $T_{\text{EP}}(Z u^{(m)})$ to drive $z_t \to \mathcal{N}(0, I_D)$ in $O(N \cdot M)$ time without $D\times D$ covariance inversion.
-  - **VICReg Variance Hinge ($\lambda = 0.02$):** Penalizes $\max(0, 1 - \sqrt{\text{Var}(z_d)})$ per channel.
-- **Causal Residual Predictor $g_\psi$:** Looks up the frozen `LAM` code $k_t$ in a trainable action embedding table $E_a \in \mathbb{R}^{8\times D}$, adds $E_a(k_t)$ to all 64 spatial tokens of $z_t$, runs 4–6 causal `STBlock` layers, and predicts the residual transition $\hat{z}_{t+1} = z_t + \Delta z_\psi(z_{0..t}, k_{0..t})$ trained via $L_1$ loss $\|\hat{z}_{t+1} - \text{sg}[z_{t+1}^{\text{tgt}}]\|_1$.
+<details>
+<summary><b>Stage 3 · Few-Shot Action Alignment (<code>ActionAlignment</code>)</b> — 0.1%–10% labels, translates codes to game controls</summary>
 
-#### Stages 3 & 4: Few-Shot Alignment & Dual Action Loops (Inner CEM vs. Outer MPC)
-- **Why Context Conditioning Matters (`ActionAlignment`):** Because ego-centric effects depend on the player's surroundings (e.g., pressing `move_up` against a rock or water shoreline produces zero camera shift), our probe $P_\phi(a_{\text{real}} \mid k_t, \bar{z}_t)$ takes both the one-hot latent code $k_t \in \{0..7\}$ and the mean-pooled scene embedding $\bar{z}_t \in \mathbb{R}^D$. At inference, it applies a log-prior correction ($\gamma = 0.5$) to counter action frequency imbalance:
-  $$\hat{a}_t = \arg\max_{a} \big(\log P_\phi(a \mid k_t, \bar{z}_t) - 0.5\log \hat{P}(a)\big)$$
-- **Inner Mental Loop (`CEMPlanner` inside `JEPA`):** Before taking a single step in the game, the planner encodes $z_t = f_\theta(x_t)$ and $z_{\text{goal}} = f_\theta(x_{\text{goal}})$. Across $I=4$ iterations, it samples $M=128$ candidate 6-step latent code sequences $k^{(m)} \in \{0..7\}^6$, unrolls $\hat{z}_{t+1..t+6}$ using $g_\psi$, ranks candidates by latent $L_1$ distance to $z_{\text{goal}}$, refits the categorical distribution to the top $E=16$ elites, and emits the best immediate latent code $k_0^*$.
-- **Outer Physical Loop (Environment MPC):** `ActionAlignment` translates $k_0^*$ into $\hat{a}_t$, the game steps to $x_{t+1}$, and planning repeats in receding-horizon fashion.
+- **Module:** [`alignment.py`](latent_play/planning/alignment.py) (`1.6K`–`27K` parameters).
+- **Input → Output:** Inferred code $k_t \in \{0..7\}$ + scene context embedding $\bar{z}_t \in \mathbb{R}^D \to$ distribution over real controls $P_\phi(a \mid k_t, \bar{z}_t)$.
+- **Architecture:** Lightweight 2-layer MLP probe trained on just `0.1%–10%` of labelled interaction frames while `LAM` and `JEPA` remain completely frozen.
+- **Objective:** Cross-entropy against ground-truth game controls. Context conditioning resolves identical visual transitions produced in different surroundings (e.g., walking into an obstacle vs. open terrain).
+</details>
 
+<details>
+<summary><b>Stage 4 · Closed-Loop Latent Planning (<code>CEMPlanner</code>)</b> — Test-time MPC entirely inside latent space</summary>
+
+- **Module:** [`cem.py`](latent_play/planning/cem.py) (*zero learned parameters at test time*).
+- **Input → Output:** Current frame $x_t$ + goal image $x_{\text{goal}} \to$ executed environment action $\hat{a}_t$.
+- **Algorithm:** Cross-Entropy Method (`CEM`). Encodes $z_t = f_\theta(x_t)$ and $z_{\text{goal}} = f_\theta(x_{\text{goal}})$. Over $I=4$ iterations, evaluates $M=128$ candidate 6-step latent sequences entirely inside `JEPA` latent space, minimizes $L_1$ latent distance to $z_{\text{goal}}$, selects the elite first code $k_0^*$, and executes real game control with log-prior frequency correction:
+  $$\hat{a}_t = \arg\max_{a} \big(\log P_\phi(a \mid k_0^*, \bar{z}_t) - 0.5\log \hat{P}(a)\big)$$
 </details>
 
 ---
