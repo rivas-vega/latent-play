@@ -28,6 +28,7 @@ class CEMPlanner:
         iterations: int = 4,
         temperature: float = 1.0,
         alignment: ActionAlignment | None = None,
+        prior_correction: float = 0.5,
     ) -> None:
         self.dynamics = dynamics.eval()
         self.horizon = horizon
@@ -36,6 +37,7 @@ class CEMPlanner:
         self.iterations = iterations
         self.temperature = temperature
         self.alignment = alignment
+        self.prior_correction = prior_correction
         self.num_actions = dynamics.cfg.num_actions
 
     @torch.no_grad()
@@ -112,7 +114,11 @@ class CEMPlanner:
         if self.alignment is not None:
             code_t = torch.tensor([first_action_id], device=device)
             z_ctx = z_curr if self.alignment.use_state_context else None
-            real_action = int(self.alignment.predict_action(code_t, z=z_ctx).item())
+            real_action = int(
+                self.alignment.predict_action(
+                    code_t, z=z_ctx, prior_correction=self.prior_correction
+                ).item()
+            )
             return real_action, best_seq
 
         return first_action_id, best_seq
