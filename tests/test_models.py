@@ -83,3 +83,27 @@ def test_visible_actions():
     p0 = np.array([[0, 0], [3, 3], [1, 1]])
     p1 = np.array([[0, 0], [4, 3], [1, 1]])
     np.testing.assert_array_equal(visible_actions(a, p0, p1), [0, 2, 0])
+
+
+def test_lam_with_state_context():
+    torch.manual_seed(0)
+    cfg = LAMConfig(
+        image_size=32,
+        patch=8,
+        context=2,
+        dim=32,
+        enc_depth=1,
+        dec_depth=1,
+        heads=2,
+        num_codes=4,
+        code_dim=8,
+        state_context=True,
+    )
+    model = LatentActionModel(cfg)
+    frames = torch.rand(2, 3, 3, 32, 32) * 2 - 1
+    out = model(frames)
+    assert out["pred"].shape == (2, 2, 3, 32, 32)
+    assert out["indices"].shape == (2, 2)
+    out["loss"].backward()
+    assert model.to_action.weight.grad is not None
+

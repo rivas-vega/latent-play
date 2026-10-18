@@ -40,6 +40,7 @@ class DynamicsConfig:
     action_dim: int = 64
     max_context: int = 16  # maximum temporal rollout window
     pool_tokens: bool = False  # if True, pool tokens to [B, D]; else keep [B, N, D]
+    action_modulation: str = "additive"  # "additive" or "film"
 
 
 class VisionEncoder(nn.Module):
@@ -78,6 +79,15 @@ class JEPADynamics(nn.Module):
         self.time_embed = nn.Parameter(torch.zeros(1, cfg.max_context, 1, cfg.dim))
         nn.init.trunc_normal_(self.time_embed, std=0.02)
 
+        if cfg.action_modulation == "film":
+            self.action_film = nn.Sequential(
+                nn.Linear(cfg.dim, cfg.dim),
+                nn.SiLU(),
+                nn.Linear(cfg.dim, cfg.dim * 2),
+            )
+            nn.init.zeros_(self.action_film[-1].weight)
+            nn.init.zeros_(self.action_film[-1].bias)
+
         # Predictor transformer: STBlock (spatial bidirectional + temporal causal) when keeping patch tokens
         if cfg.pool_tokens:
             self.pred_blocks = nn.ModuleList(
@@ -114,18 +124,23 @@ class JEPADynamics(nn.Module):
         act_tokens = self.action_embed(safe_actions)  # [B, T, D]
         t_emb = self.time_embed[:, :T]  # [1, T, 1, D]
 
-        if self.cfg.pool_tokens:
-            h = z_ctx + act_tokens + t_emb[:, :, 0, :]
-            for blk in self.pred_blocks:
-                h = blk(h, causal=True)
-            h = self.pred_norm(h)
-            return z_ctx + self.pred_head(h)  # Residual latent transition [B, T, D]
+        if self.cfg.action_modulation == "film":
+            cond = act_tokens + (t_emb[:, :, 0, :] if t_emb.ndim == 4 else t_emb)
+            gamma, beta = self.action_film(cond).chunk(2, dim=-1)
+            if self.cfg.pool_tokens:
+                h = z_ctx * (1.0 + gamma) + beta
+            else:
+                h = z_ctx * (1.0 + gamma[:, :, None, :]) + beta[:, :, None, :]
         else:
-            h = z_ctx + act_tokens[:, :, None, :] + t_emb  # [B, T, N, D]
-            for blk in self.pred_blocks:
-                h = blk(h)  # STBlock: spatial bidirectional within frame t, temporal causal across <= t
-            h = self.pred_norm(h)
-            return z_ctx + self.pred_head(h)  # Residual latent transition [B, T, N, D]
+            if self.cfg.pool_tokens:
+                h = z_ctx + act_tokens + t_emb[:, :, 0, :]
+            else:
+                h = z_ctx + act_tokens[:, :, None, :] + t_emb  # [B, T, N, D]
+
+        for blk in self.pred_blocks:
+            h = blk(h, causal=True) if self.cfg.pool_tokens else blk(h)
+        h = self.pred_norm(h)
+        return z_ctx + self.pred_head(h)
 
     def step_predict(self, z_seq: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         """Predicts the next representation z_{t+1} given history z_{1..t} and actions a_{1..t}.

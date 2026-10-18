@@ -39,6 +39,7 @@ class LAMConfig:
     beta: float = 0.25
     vq_weight: float = 0.05
     motion_focus: float = 15.0  # upweights pixels that changed between t and t+1
+    state_context: bool = False  # condition latent action VQ on initial frame affordances
 
     @property
     def num_frames(self) -> int:
@@ -53,8 +54,10 @@ class LatentActionModel(nn.Module):
         self.enc_embed = PatchEmbed(cfg.image_size, cfg.patch, cfg.dim, T)
         self.encoder = STTransformer(cfg.dim, cfg.enc_depth, cfg.heads)
         self.spatial_attn = nn.Linear(cfg.dim, 1)
-        self.action_ln = nn.LayerNorm(cfg.dim)
-        self.to_action = nn.Linear(cfg.dim, cfg.code_dim)
+
+        in_dim = cfg.dim * 2 if cfg.state_context else cfg.dim
+        self.action_ln = nn.LayerNorm(in_dim)
+        self.to_action = nn.Linear(in_dim, cfg.code_dim)
         self.vq = VectorQuantizer(cfg.num_codes, cfg.code_dim, beta=cfg.beta)
 
         self.dec_embed = PatchEmbed(cfg.image_size, cfg.patch, cfg.dim, T - 1)
@@ -69,6 +72,10 @@ class LatentActionModel(nn.Module):
         dh = h[:, 1:] - h[:, :-1]  # [B, T-1, N, D] — cancels static episode background
         weights = F.softmax(self.spatial_attn(dh), dim=2)  # [B, T-1, N, 1]
         pooled = (dh * weights).sum(dim=2)  # [B, T-1, D]
+        if self.cfg.state_context:
+            # Also pool the initial state at the attended action locations
+            state_ctx = (h[:, :-1] * weights).sum(dim=2)  # [B, T-1, D]
+            pooled = torch.cat([pooled, state_ctx], dim=-1)
         return self.to_action(self.action_ln(pooled))
 
     # ------------------------------------------------------------ inference

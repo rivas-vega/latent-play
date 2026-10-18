@@ -77,3 +77,32 @@ def test_jepa_dynamics_causality_and_unlabelled_actions():
     z_c[:, 0, 15] = torch.randn_like(z_c[:, 0, 15])
     pred_c = model(z_c, actions)
     assert not torch.allclose(pred_a[:, 0, 0], pred_c[:, 0, 0])
+
+
+def test_jepa_dynamics_film_modulation():
+    torch.manual_seed(0)
+    cfg_film = DynamicsConfig(
+        image_size=32,
+        patch=8,
+        dim=32,
+        enc_depth=1,
+        enc_heads=2,
+        pred_depth=1,
+        pred_heads=2,
+        num_actions=5,
+        max_context=8,
+        pool_tokens=False,
+        action_modulation="film",
+    )
+    model = JEPADynamics(cfg_film)
+    frames = torch.rand(2, 3, 3, 32, 32) * 2 - 1
+    actions = torch.randint(0, 5, (2, 2))
+
+    z = model.encode(frames)
+    pred = model(z[:, :-1], actions)
+    assert pred.shape == (2, 2, 16, 32)
+
+    loss = pred.sum()
+    loss.backward()
+    assert model.action_film[-1].weight.grad is not None
+
