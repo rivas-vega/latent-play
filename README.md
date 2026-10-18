@@ -1,10 +1,6 @@
 # `latent-play` — Learning Actionable World Models from Unlabelled Gameplay
 
-[![CI](https://img.shields.io/github/actions/workflow/status/rivas-vega/latent-play/ci.yml?branch=main&label=CI&style=flat-square&color=black)](https://github.com/rivas-vega/latent-play/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11+-black?style=flat-square)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/pytorch-2.x-black?style=flat-square)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-black?style=flat-square)](LICENSE)
-[![Open In Colab](https://img.shields.io/badge/colab-demo-black?style=flat-square&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/rivas-vega/latent-play/blob/main/notebooks/colab_training_and_demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rivas-vega/latent-play/blob/main/notebooks/colab_training_and_demo.ipynb)
 
 **Keywords:** `world-models` · `jepa` · `v-jepa` · `latent-actions` · `representation-learning` · `sigreg` · `cross-entropy-method` · `crafter`
 
