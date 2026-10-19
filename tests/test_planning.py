@@ -192,5 +192,28 @@ def test_cem_planner_momentum():
     assert 0 <= action < 5
     assert seq.shape == (4,)
 
+def test_cem_planner_warm_start_and_reset():
+    torch.manual_seed(0)
+    dynamics = JEPADynamics(TINY_DYN).eval()
+    planner = CEMPlanner(
+        dynamics=dynamics,
+        horizon=4,
+        num_samples=16,
+        num_elites=4,
+        iterations=2,
+    )
+    z_curr = torch.randn(1, 16, 32)
+    z_goal = torch.randn(1, 16, 32)
+    assert planner.prev_logits is None
 
+    action1, seq1 = planner.plan(z_curr, z_goal)
+    assert planner.prev_logits is not None
+    assert planner.prev_logits.shape == (4, 5)
 
+    # Subsequent plan warm-starts from shifted previous logits
+    action2, seq2 = planner.plan(z_curr, z_goal)
+    assert 0 <= action2 < 5
+
+    # Reset clears warm-started logits
+    planner.reset()
+    assert planner.prev_logits is None

@@ -32,6 +32,8 @@ class CEMPlanner:
         alpha: float = 0.5,
         stagnation_penalty: float = 0.0,
         stagnation_threshold: float = 0.01,
+        time_to_goal_weight: float = 0.02,
+        noop_penalty: float = 0.05,
     ) -> None:
         self.dynamics = dynamics.eval()
         self.horizon = horizon
@@ -44,12 +46,19 @@ class CEMPlanner:
         self.alpha = alpha
         self.stagnation_penalty = stagnation_penalty
         self.stagnation_threshold = stagnation_threshold
+        self.time_to_goal_weight = time_to_goal_weight
+        self.noop_penalty = noop_penalty
         self.num_actions = dynamics.cfg.num_actions
+        self.prev_logits: torch.Tensor | None = None
 
         if self.alignment is not None:
             assert self.num_actions == self.alignment.num_codes, (
                 f"Dynamics model num_actions ({self.num_actions}) must match alignment num_codes ({self.alignment.num_codes})"
             )
+
+    def reset(self) -> None:
+        """Clears warm-started plan distribution at the start of a new episode."""
+        self.prev_logits = None
 
     @torch.no_grad()
     def plan(
@@ -84,8 +93,12 @@ class CEMPlanner:
         M = self.num_samples
         A = self.num_actions
 
-        # Initialize uniform logits over H timesteps: [H, A]
-        logits = torch.zeros(H, A, device=device)
+        # Warm-start logits from shifted previous plan if available; otherwise uniform
+        if self.prev_logits is not None and self.prev_logits.shape == (H, A):
+            logits = torch.zeros(H, A, device=device)
+            logits[:-1] = self.prev_logits[1:]
+        else:
+            logits = torch.zeros(H, A, device=device)
 
         # Expand z_curr for parallel rollout: [M, 1, ...]
         z_init = z_curr.repeat(M, *([1] * (z_curr.ndim - 1)))
@@ -118,8 +131,9 @@ class CEMPlanner:
             # Autoregressive rollout in latent space: [M, H, ...]
             traj = self.dynamics.rollout(z_init, actions)
 
-            # Cost: combination of terminal distance and closest approach along the horizon
-            # This ensures goals closer than H steps are reached immediately without overshooting.
+            # Cost: combination of closest approach along the horizon and early arrival incentive.
+            # This ensures goals closer than H steps are reached immediately without being penalized
+            # for subsequent actions taken after arrival.
             if use_spatial:
                 traj_2d = traj.reshape(M * H, G, G, D).permute(0, 3, 1, 2)
                 s_traj = F.conv2d(traj_2d, kernel, padding=kernel_size // 2, groups=D)
@@ -128,9 +142,19 @@ class CEMPlanner:
                 diff = traj.float() - z_goal_target.float()
                 step_dists = diff.abs().reshape(M, H, -1).mean(dim=-1)  # [M, H]
 
-            min_dist = step_dists.min(dim=1).values  # [M]
-            final_dist = step_dists[:, -1]  # [M]
-            costs = 0.5 * final_dist + 0.5 * min_dist
+            min_vals, min_steps = step_dists.min(dim=1)
+            costs = min_vals + self.time_to_goal_weight * min_steps.float()
+
+            # Penalize picking NOOP as first action when attempting to navigate to goal
+            if self.noop_penalty > 0.0:
+                first_actions = actions[:, 0]
+                if self.alignment is not None:
+                    z_ctx = z_curr.repeat(M, *([1] * (z_curr.ndim - 1))) if self.alignment.use_state_context else None
+                    first_real = self.alignment.predict_action(first_actions, z=z_ctx, prior_correction=self.prior_correction)
+                    is_noop = (first_real == 0).float()
+                else:
+                    is_noop = (first_actions == 0).float()
+                costs = costs + self.noop_penalty * is_noop
 
             # Stagnation penalty: penalize plans that get stuck against obstacles or produce near-zero displacement
             if self.stagnation_penalty > 0.0 and traj.shape[1] > 1:
@@ -154,6 +178,7 @@ class CEMPlanner:
             logits = torch.log(smoothed_probs.clamp_min(1e-6))
 
         assert best_seq is not None
+        self.prev_logits = logits.detach()
         first_action_id = int(best_seq[0].item())
 
         # If planning in latent action space, translate first action to real environment action

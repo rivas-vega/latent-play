@@ -83,6 +83,7 @@ def run_goal_episode(
 
     # Restore environment back to the exact starting state x_0 (same world, background, and entities)
     obs, info = env.restore_state(init_state)
+    planner.reset()
 
     frames_history = [obs]
     success = False
