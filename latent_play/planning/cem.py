@@ -34,6 +34,7 @@ class CEMPlanner:
         stagnation_threshold: float = 0.01,
         time_to_goal_weight: float = 0.02,
         noop_penalty: float = 0.05,
+        cost_metric: str = "auto",
     ) -> None:
         self.dynamics = dynamics.eval()
         self.horizon = horizon
@@ -48,6 +49,7 @@ class CEMPlanner:
         self.stagnation_threshold = stagnation_threshold
         self.time_to_goal_weight = time_to_goal_weight
         self.noop_penalty = noop_penalty
+        self.cost_metric = cost_metric
         self.num_actions = dynamics.cfg.num_actions
         self.prev_logits: torch.Tensor | None = None
 
@@ -106,8 +108,14 @@ class CEMPlanner:
 
         # Precompute spatial smoothing kernel if evaluating on 2D patch grid
         G = int(self.dynamics.cfg.image_size // self.dynamics.cfg.patch)
-        use_spatial = (not pool_tokens) and (z_goal_target.ndim == 2) and (z_goal_target.shape[0] == G * G)
-        if use_spatial:
+        effective_metric = self.cost_metric
+        if effective_metric == "auto":
+            if (not pool_tokens) and (z_goal_target.ndim == 2) and (z_goal_target.shape[0] == G * G):
+                effective_metric = "spatial_conv"
+            else:
+                effective_metric = "l1"
+
+        if effective_metric == "spatial_conv":
             D = self.dynamics.cfg.dim
             kernel_size = 5
             sigma = 1.5
@@ -134,11 +142,18 @@ class CEMPlanner:
             # Cost: combination of closest approach along the horizon and early arrival incentive.
             # This ensures goals closer than H steps are reached immediately without being penalized
             # for subsequent actions taken after arrival.
-            if use_spatial:
+            if effective_metric == "spatial_conv":
                 traj_2d = traj.reshape(M * H, G, G, D).permute(0, 3, 1, 2)
                 s_traj = F.conv2d(traj_2d, kernel, padding=kernel_size // 2, groups=D)
                 step_dists = (s_traj - s_goal).abs().reshape(M, H, -1).mean(dim=-1)
-            else:
+            elif effective_metric == "cosine":
+                sim = F.cosine_similarity(traj.float(), z_goal_target.float(), dim=-1)
+                step_dists = (1.0 - sim).reshape(M, H, -1).mean(dim=-1)
+            elif effective_metric == "pooled":
+                t_p = traj.float().mean(dim=2) if traj.ndim == 4 else traj.float()
+                g_p = z_goal_target.float().mean(dim=0) if z_goal_target.ndim == 2 else z_goal_target.float()
+                step_dists = (t_p - g_p).abs().mean(dim=-1)
+            else:  # "l1"
                 diff = traj.float() - z_goal_target.float()
                 step_dists = diff.abs().reshape(M, H, -1).mean(dim=-1)  # [M, H]
 

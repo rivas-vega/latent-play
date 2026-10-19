@@ -133,6 +133,7 @@ def main() -> None:
     ap.add_argument("--num-samples", type=int, default=128)
     ap.add_argument("--num-elites", type=int, default=16)
     ap.add_argument("--iterations", type=int, default=4)
+    ap.add_argument("--cost-metric", choices=["auto", "spatial_conv", "l1", "cosine", "pooled"], default="auto")
     ap.add_argument("--out-dir", default="outputs/eval_planning")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--distractor", action="store_true", default=None, help="Enable distractor in toy env (default: False for planning eval)")
@@ -171,6 +172,7 @@ def main() -> None:
         num_elites=args.num_elites,
         iterations=args.iterations,
         alignment=alignment,
+        cost_metric=args.cost_metric,
     )
 
     env_name = cfg["data"]["root"].split("/")[-1]

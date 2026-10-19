@@ -217,3 +217,23 @@ def test_cem_planner_warm_start_and_reset():
     # Reset clears warm-started logits
     planner.reset()
     assert planner.prev_logits is None
+
+
+def test_cem_planner_cost_metrics():
+    torch.manual_seed(0)
+    dynamics = JEPADynamics(TINY_DYN).eval()
+    for metric in ("auto", "spatial_conv", "l1", "cosine", "pooled"):
+        planner = CEMPlanner(
+            dynamics=dynamics,
+            horizon=3,
+            num_samples=16,
+            num_elites=4,
+            iterations=2,
+            cost_metric=metric,
+        )
+        z_curr = torch.randn(1, 16, 32)
+        z_goal = torch.randn(1, 16, 32)
+        action, seq = planner.plan(z_curr, z_goal)
+        assert 0 <= action < 5
+        assert seq.shape == (3,)
+

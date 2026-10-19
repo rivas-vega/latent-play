@@ -212,6 +212,7 @@ def main() -> None:
     ap.add_argument("--cem-elites", type=int, default=16, help="Number of top elite sequences selected per CEM iteration")
     ap.add_argument("--cem-iters", type=int, default=4, help="Number of CEM optimization iterations")
     ap.add_argument("--cem-horizon", type=int, default=6, help="Planning horizon in steps")
+    ap.add_argument("--cem-cost-metric", choices=["auto", "spatial_conv", "l1", "cosine", "pooled"], default="auto", help="CEM trajectory scoring distance metric")
     ap.add_argument("--collapse-blocked", action="store_true", default=None, help="Map blocked movement actions to NOOP (default: True for toy, False otherwise)")
     ap.add_argument("--distractor", action="store_true", default=None, help="Enable distractor in toy env (default: False for planning eval)")
     args = ap.parse_args()
@@ -260,6 +261,7 @@ def main() -> None:
             num_samples=args.cem_samples,
             num_elites=args.cem_elites,
             iterations=args.cem_iters,
+            cost_metric=args.cem_cost_metric,
         )
         env = make_env(env_name, seed=100, **env_kwargs)
         ora_sr = np.mean(
@@ -365,6 +367,20 @@ def main() -> None:
                 acc = (preds == val_actions_all).float().mean().item()
                 results["alignment_accuracy"][str(frac)].append(acc)
 
+                bayes_ceiling = 0.3895 if env_name == "crafter" else 1.0
+                rel_acc = min(1.0, acc / bayes_ceiling)
+
+                if env_name == "crafter":
+                    equiv_map = torch.tensor([0, 1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=preds.device)
+                    g_preds = equiv_map[preds]
+                    g_targs = equiv_map[val_actions_all]
+                    grouped_acc = (g_preds == g_targs).float().mean().item()
+                else:
+                    grouped_acc = acc
+
+                results.setdefault("alignment_relative", {str(f): [] for f in args.fractions})[str(frac)].append(rel_acc)
+                results.setdefault("alignment_grouped", {str(f): [] for f in args.fractions})[str(frac)].append(grouped_acc)
+
                 if dyn_model is not None:
                     planner = CEMPlanner(
                         dynamics=dyn_model,
@@ -373,6 +389,7 @@ def main() -> None:
                         num_elites=args.cem_elites,
                         iterations=args.cem_iters,
                         alignment=align,
+                        cost_metric=args.cem_cost_metric,
                     )
                     env = make_env(env_name, seed=seed + 100, **env_kwargs)
                     ep_succ = [
@@ -383,10 +400,12 @@ def main() -> None:
                     frac_srs.append(sr)
                     results["planning_success"][str(frac)].append(sr)
                     print(
-                        f"Fraction {frac:6.1%} | Seed {seed} | Probe Acc: {acc:6.1%} | Planning Success: {sr:5.1f}%"
+                        f"Fraction {frac:6.1%} | Seed {seed} | Probe Acc: {acc:5.1%} ({rel_acc:5.1%} of Bayes ceiling) | Grouped Acc: {grouped_acc:5.1%} | Planning: {sr:5.1f}%"
                     )
                 else:
-                    print(f"Fraction {frac:6.1%} | Seed {seed} | Action Alignment Acc: {acc:6.1%}")
+                    print(
+                        f"Fraction {frac:6.1%} | Seed {seed} | Probe Acc: {acc:5.1%} ({rel_acc:5.1%} of Bayes ceiling) | Grouped Acc: {grouped_acc:5.1%}"
+                    )
 
             if frac_srs:
                 results["ours"]["mean"].append(float(np.mean(frac_srs)))
