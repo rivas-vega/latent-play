@@ -100,5 +100,5 @@ class ActionAlignment(nn.Module):
         ce = F.cross_entropy(logits[valid], target_actions[valid], weight=class_weights)
         if codes is not None:
             inv_logits = self.forward_inverse(target_actions[valid])
-            ce = ce + F.cross_entropy(inv_logits, codes[valid])
+            ce = ce + 0.1 * F.cross_entropy(inv_logits, codes[valid])
         return ce

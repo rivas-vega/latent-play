@@ -146,3 +146,51 @@ def test_cem_planner_pooled():
     assert seq.shape == (4,)
 
 
+def test_fit_alignment_probe():
+    from scripts.sweep_labels import fit_alignment_probe
+
+    torch.manual_seed(42)
+    num_codes = 4
+    num_actions = 4
+    N = 200
+    # Perfect correspondence: code k corresponds to action k
+    codes = torch.randint(0, num_codes, (N,))
+    actions = codes.clone()
+
+    align = fit_alignment_probe(
+        codes,
+        actions,
+        z=None,
+        num_codes=num_codes,
+        num_actions=num_actions,
+        dim=32,
+        device=torch.device("cpu"),
+        epochs=10,
+        lr=0.05,
+    )
+
+    preds = align.predict_action(codes)
+    acc = (preds == actions).float().mean().item()
+    assert acc > 0.95
+
+
+def test_cem_planner_momentum():
+    torch.manual_seed(0)
+    dynamics = JEPADynamics(TINY_DYN).eval()
+    planner = CEMPlanner(
+        dynamics=dynamics,
+        horizon=4,
+        num_samples=16,
+        num_elites=4,
+        iterations=3,
+        alpha=0.6,
+    )
+    assert planner.alpha == 0.6
+    z_curr = torch.randn(1, 16, 32)
+    z_goal = torch.randn(1, 16, 32)
+    action, seq = planner.plan(z_curr, z_goal)
+    assert 0 <= action < 5
+    assert seq.shape == (4,)
+
+
+

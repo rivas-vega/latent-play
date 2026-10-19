@@ -28,7 +28,8 @@ class CEMPlanner:
         iterations: int = 4,
         temperature: float = 1.0,
         alignment: ActionAlignment | None = None,
-        prior_correction: float = 0.5,
+        prior_correction: float = 0.0,
+        alpha: float = 0.5,
         stagnation_penalty: float = 0.0,
         stagnation_threshold: float = 0.01,
     ) -> None:
@@ -40,6 +41,7 @@ class CEMPlanner:
         self.temperature = temperature
         self.alignment = alignment
         self.prior_correction = prior_correction
+        self.alpha = alpha
         self.stagnation_penalty = stagnation_penalty
         self.stagnation_threshold = stagnation_threshold
         self.num_actions = dynamics.cfg.num_actions
@@ -118,12 +120,12 @@ class CEMPlanner:
                 best_cost = costs[elite_idx[0]].item()
                 best_seq = elite_actions[0]
 
-            # Update distribution parameters from elites
-            # One-hot encode elite actions: [num_elites, H, A]
+            # Update distribution parameters from elites with momentum smoothing in probability space
             one_hot = F.one_hot(elite_actions, num_classes=A).float()
-            # Mean frequency across elites: [H, A]
-            elite_probs = one_hot.mean(dim=0).clamp_min(1e-6)
-            logits = torch.log(elite_probs)
+            elite_probs = one_hot.mean(dim=0)  # [H, A]
+            curr_probs = F.softmax(logits, dim=-1)
+            smoothed_probs = (1.0 - self.alpha) * curr_probs + self.alpha * elite_probs
+            logits = torch.log(smoothed_probs.clamp_min(1e-6))
 
         assert best_seq is not None
         first_action_id = int(best_seq[0].item())

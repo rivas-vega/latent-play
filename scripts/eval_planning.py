@@ -134,6 +134,7 @@ def main() -> None:
     ap.add_argument("--iterations", type=int, default=4)
     ap.add_argument("--out-dir", default="outputs/eval_planning")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--distractor", action="store_true", default=None, help="Enable distractor in toy env (default: False for planning eval)")
     args = ap.parse_args()
 
     seed_everything(args.seed)
@@ -169,7 +170,11 @@ def main() -> None:
         alignment=alignment,
     )
 
-    env = make_env(cfg["data"]["root"].split("/")[-1], seed=args.seed)
+    env_name = cfg["data"]["root"].split("/")[-1]
+    if args.distractor is None:
+        args.distractor = False if env_name == "toy" else True
+    env_kwargs = {"distractor": args.distractor} if env_name == "toy" else {}
+    env = make_env(env_name, seed=args.seed, **env_kwargs)
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)

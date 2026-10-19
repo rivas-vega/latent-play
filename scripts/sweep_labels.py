@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 
 from latent_play.data import VideoWindows
 from latent_play.envs import make_env
+from latent_play.eval import visible_actions
 from latent_play.models import DynamicsConfig, JEPADynamics, LAMConfig, LatentActionModel
 from latent_play.planning import ActionAlignment, CEMPlanner
 from latent_play.utils import get_device, load_checkpoint, seed_everything
@@ -38,6 +39,7 @@ def precompute_dataset_features(
     dyn_model: JEPADynamics | None = None,
     use_state_context: bool = False,
     only_valid_labels: bool = False,
+    collapse_blocked: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Precomputes and caches discrete LAM codes, actions, and visual embeddings once."""
     lam.eval()
@@ -51,6 +53,12 @@ def precompute_dataset_features(
 
     for batch in loader:
         target_actions = batch["action_true"] if "action_true" in batch else batch["action"]
+        if collapse_blocked and "pos" in batch:
+            a_np = target_actions.numpy()
+            pos_np = batch["pos"].numpy()
+            vis_np = visible_actions(a_np, pos_np[:, :-1], pos_np[:, 1:])
+            target_actions = torch.from_numpy(vis_np)
+
         if only_valid_labels:
             valid = target_actions >= 0
             if not valid.any():
@@ -96,11 +104,12 @@ def fit_alignment_probe(
     num_actions: int,
     dim: int,
     device: torch.device,
-    epochs: int = 8,
+    epochs: int = 10,
     lr: float = 1e-2,
+    batch_size: int = 256,
     use_state_context: bool = False,
 ) -> ActionAlignment:
-    """Trains the action alignment classifier on pre-cached tensors."""
+    """Trains the action alignment classifier on pre-cached tensors using standard minibatches."""
     align = ActionAlignment(
         num_codes=num_codes,
         num_actions=num_actions,
@@ -118,15 +127,25 @@ def fit_alignment_probe(
     counts = torch.bincount(actions, minlength=num_actions).float()
     prior = (counts + 1.0) / (counts.sum() + num_actions)
     align.action_prior.copy_(prior)
-    class_weights = (1.0 / torch.sqrt(counts.clamp_min(1.0))).to(device)
-    class_weights = class_weights / class_weights.mean()
 
-    for _ in range(epochs * 10):
-        logits = align(codes, z=z)
-        loss = align.loss(logits, actions, codes=codes, class_weights=class_weights)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
+    dataset = (
+        torch.utils.data.TensorDataset(codes, actions)
+        if z is None
+        else torch.utils.data.TensorDataset(codes, actions, z)
+    )
+    effective_bs = min(batch_size, max(16, len(actions)))
+    loader = DataLoader(dataset, batch_size=effective_bs, shuffle=True)
+
+    align.train()
+    for _ in range(epochs):
+        for b_data in loader:
+            b_codes, b_actions = b_data[0], b_data[1]
+            b_z = b_data[2] if z is not None else None
+            logits = align(b_codes, z=b_z)
+            loss = align.loss(logits, b_actions, codes=b_codes)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
 
     return align.eval()
 
@@ -136,9 +155,11 @@ def train_alignment_probe(
     loader: DataLoader,
     device: torch.device,
     dyn_model: JEPADynamics | None = None,
-    epochs: int = 8,
+    epochs: int = 10,
     lr: float = 1e-2,
+    batch_size: int = 256,
     use_state_context: bool = False,
+    collapse_blocked: bool = False,
 ) -> ActionAlignment:
     """Trains the action alignment classifier on only the labelled subset (where action >= 0)."""
     lam.eval()
@@ -151,7 +172,13 @@ def train_alignment_probe(
     use_ctx = use_state_context and dyn_model is not None
 
     cached = precompute_dataset_features(
-        lam, loader, device, dyn_model=dyn_model, use_state_context=use_ctx, only_valid_labels=True
+        lam,
+        loader,
+        device,
+        dyn_model=dyn_model,
+        use_state_context=use_ctx,
+        only_valid_labels=True,
+        collapse_blocked=collapse_blocked,
     )
     return fit_alignment_probe(
         cached["codes"],
@@ -163,6 +190,7 @@ def train_alignment_probe(
         device=device,
         epochs=epochs,
         lr=lr,
+        batch_size=batch_size,
         use_state_context=use_ctx,
     )
 
@@ -184,6 +212,8 @@ def main() -> None:
     ap.add_argument("--cem-elites", type=int, default=16, help="Number of top elite sequences selected per CEM iteration")
     ap.add_argument("--cem-iters", type=int, default=4, help="Number of CEM optimization iterations")
     ap.add_argument("--cem-horizon", type=int, default=6, help="Planning horizon in steps")
+    ap.add_argument("--collapse-blocked", action="store_true", default=None, help="Map blocked movement actions to NOOP (default: True for toy, False otherwise)")
+    ap.add_argument("--distractor", action="store_true", default=None, help="Enable distractor in toy env (default: False for planning eval)")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -191,8 +221,14 @@ def main() -> None:
     device = get_device()
     env_name = Path(args.data_root).name
 
+    if args.collapse_blocked is None:
+        args.collapse_blocked = (env_name == "toy")
+    if args.distractor is None:
+        args.distractor = False if env_name == "toy" else True
+    env_kwargs = {"distractor": args.distractor} if env_name == "toy" else {}
+
     print(f"Running label-fraction sweep on fractions: {args.fractions}")
-    print(f"Seeds: {args.seeds} | Use State Context: {args.use_state_context}")
+    print(f"Seeds: {args.seeds} | Use State Context: {args.use_state_context} | Collapse Blocked: {args.collapse_blocked}")
 
     results = {
         "fractions": args.fractions,
@@ -221,7 +257,7 @@ def main() -> None:
             num_elites=args.cem_elites,
             iterations=args.cem_iters,
         )
-        env = make_env(env_name, seed=100)
+        env = make_env(env_name, seed=100, **env_kwargs)
         ora_sr = np.mean(
             [
                 run_goal_episode(env, ora_model, ora_planner, device, args.target_dist, args.max_steps)["success"]
@@ -242,7 +278,12 @@ def main() -> None:
         val_loader = DataLoader(val_ds, batch_size=64, shuffle=False)
         print("Pre-caching validation representations...")
         val_cached = precompute_dataset_features(
-            lam, val_loader, device, dyn_model=dyn_model, use_state_context=args.use_state_context
+            lam,
+            val_loader,
+            device,
+            dyn_model=dyn_model,
+            use_state_context=args.use_state_context,
+            collapse_blocked=args.collapse_blocked,
         )
         val_codes_all = val_cached["codes"].to(device)
         val_actions_all = val_cached["actions"].to(device)
@@ -263,6 +304,7 @@ def main() -> None:
             device,
             dyn_model=dyn_model,
             use_state_context=args.use_state_context,
+            collapse_blocked=args.collapse_blocked,
         )
         train_codes_all = train_cached["codes"]
         train_actions_all = train_cached["actions"]
@@ -315,7 +357,7 @@ def main() -> None:
 
                 # Evaluate accuracy on validation ground-truth actions in one shot
                 with torch.no_grad():
-                    preds = align.predict_action(val_codes_all, z=val_z_all, prior_correction=0.5)
+                    preds = align.predict_action(val_codes_all, z=val_z_all, prior_correction=0.0)
                 acc = (preds == val_actions_all).float().mean().item()
                 results["alignment_accuracy"][str(frac)].append(acc)
 
@@ -328,7 +370,7 @@ def main() -> None:
                         iterations=args.cem_iters,
                         alignment=align,
                     )
-                    env = make_env(env_name, seed=seed + 100)
+                    env = make_env(env_name, seed=seed + 100, **env_kwargs)
                     ep_succ = [
                         run_goal_episode(env, dyn_model, planner, device, args.target_dist, args.max_steps)["success"]
                         for _ in range(args.num_episodes)

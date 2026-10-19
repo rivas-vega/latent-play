@@ -6,7 +6,7 @@ env_kwargs:
   size: 64
   grid: 8
   max_steps: 64
-  distractor: true
+  distractor: false
 policy:
   p_explore: 0.2
   repeat_min: 1
