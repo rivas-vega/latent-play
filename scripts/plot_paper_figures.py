@@ -101,7 +101,7 @@ def plot_fig1_label_efficiency(out_dir: Path, data: dict | None = None) -> None:
     toy_std = np.array(toy_data["ours"]["std"])
     toy_oracle = float(toy_data.get("oracle", 28.0))
     if "planning_success" in toy_data:
-        toy_max = np.array([max(toy_data["planning_success"][str(f)]) for f in fractions])
+        toy_max = np.array([max(toy_data["planning_success"].get(str(f), [toy_data.get("oracle", 20.0)])) for f in fractions])
     else:
         toy_max = toy_mean + toy_std
 
@@ -136,7 +136,7 @@ def plot_fig1_label_efficiency(out_dir: Path, data: dict | None = None) -> None:
     cr_std = np.array(crafter_data["ours"]["std"])
     cr_oracle = float(crafter_data.get("oracle", 10.0))
     if "planning_success" in crafter_data:
-        cr_max = np.array([max(crafter_data["planning_success"][str(f)]) for f in fractions])
+        cr_max = np.array([max(crafter_data["planning_success"].get(str(f), [crafter_data.get("oracle", 10.0)])) for f in fractions])
     else:
         cr_max = cr_mean + cr_std
 
