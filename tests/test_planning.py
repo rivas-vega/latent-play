@@ -76,7 +76,7 @@ def test_cem_planner():
 def test_cem_planner_with_context_alignment():
     torch.manual_seed(0)
     dynamics = JEPADynamics(TINY_DYN).eval()
-    alignment = ActionAlignment(num_codes=4, num_actions=5, dim=32, use_state_context=True)
+    alignment = ActionAlignment(num_codes=5, num_actions=5, dim=32, use_state_context=True)
     planner = CEMPlanner(
         dynamics=dynamics,
         horizon=4,

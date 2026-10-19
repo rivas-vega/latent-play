@@ -46,6 +46,11 @@ class CEMPlanner:
         self.stagnation_threshold = stagnation_threshold
         self.num_actions = dynamics.cfg.num_actions
 
+        if self.alignment is not None:
+            assert self.num_actions == self.alignment.num_codes, (
+                f"Dynamics model num_actions ({self.num_actions}) must match alignment num_codes ({self.alignment.num_codes})"
+            )
+
     @torch.no_grad()
     def plan(
         self,
