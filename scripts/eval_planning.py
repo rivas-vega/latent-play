@@ -145,6 +145,8 @@ def main() -> None:
     mcfg = DynamicsConfig(**ckpt.get("model_cfg", cfg.get("model", {})))
     model = JEPADynamics(mcfg).to(device).eval()
     model.load_state_dict(ckpt["model"])
+    if "ema" in ckpt and ckpt["ema"] is not None:
+        model.encoder.load_state_dict(ckpt["ema"])
     print(f"loaded dynamics from {args.checkpoint} (num_actions={mcfg.num_actions})")
 
     alignment = None

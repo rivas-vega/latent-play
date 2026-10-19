@@ -86,6 +86,21 @@ class CEMPlanner:
         z_init = z_curr.repeat(M, *([1] * (z_curr.ndim - 1)))
         z_goal_target = z_goal.squeeze(0)  # [D] or [N, D]
 
+        # Precompute spatial smoothing kernel if evaluating on 2D patch grid
+        G = int(self.dynamics.cfg.image_size // self.dynamics.cfg.patch)
+        use_spatial = (not pool_tokens) and (z_goal_target.ndim == 2) and (z_goal_target.shape[0] == G * G)
+        if use_spatial:
+            D = self.dynamics.cfg.dim
+            kernel_size = 5
+            sigma = 1.5
+            coords = torch.arange(kernel_size, device=device) - kernel_size // 2
+            g1d = torch.exp(-coords**2 / (2 * sigma**2))
+            g2d = (g1d[:, None] * g1d[None, :])
+            kernel = (g2d / g2d.sum()).unsqueeze(0).unsqueeze(0).repeat(D, 1, 1, 1)
+
+            goal_2d = z_goal_target.reshape(1, G, G, D).permute(0, 3, 1, 2)
+            s_goal = F.conv2d(goal_2d, kernel, padding=kernel_size // 2, groups=D)
+
         best_seq = None
         best_cost = float("inf")
 
@@ -100,8 +115,14 @@ class CEMPlanner:
 
             # Cost: combination of terminal distance and closest approach along the horizon
             # This ensures goals closer than H steps are reached immediately without overshooting.
-            diff = traj.float() - z_goal_target.float()
-            step_dists = diff.abs().reshape(M, H, -1).mean(dim=-1)  # [M, H]
+            if use_spatial:
+                traj_2d = traj.reshape(M * H, G, G, D).permute(0, 3, 1, 2)
+                s_traj = F.conv2d(traj_2d, kernel, padding=kernel_size // 2, groups=D)
+                step_dists = (s_traj - s_goal).abs().reshape(M, H, -1).mean(dim=-1)
+            else:
+                diff = traj.float() - z_goal_target.float()
+                step_dists = diff.abs().reshape(M, H, -1).mean(dim=-1)  # [M, H]
+
             min_dist = step_dists.min(dim=1).values  # [M]
             final_dist = step_dists[:, -1]  # [M]
             costs = 0.5 * final_dist + 0.5 * min_dist
@@ -116,7 +137,7 @@ class CEMPlanner:
             elite_idx = costs.argsort()[: self.num_elites]
             elite_actions = actions[elite_idx]  # [num_elites, H]
 
-            if costs[elite_idx[0]].item() < best_cost:
+            if costs[elite_idx[0]].item() <= best_cost:
                 best_cost = costs[elite_idx[0]].item()
                 best_seq = elite_actions[0]
 

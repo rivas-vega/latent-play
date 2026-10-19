@@ -244,12 +244,16 @@ def main() -> None:
         dyn_cfg = DynamicsConfig(**dyn_data["model_cfg"])
         dyn_model = JEPADynamics(dyn_cfg).to(device).eval()
         dyn_model.load_state_dict(dyn_data["model"])
+        if "ema" in dyn_data and dyn_data["ema"] is not None:
+            dyn_model.encoder.load_state_dict(dyn_data["ema"])
 
     if args.oracle_ckpt:
         ora_data = load_checkpoint(args.oracle_ckpt, device)
         ora_cfg = DynamicsConfig(**ora_data["model_cfg"])
         ora_model = JEPADynamics(ora_cfg).to(device).eval()
         ora_model.load_state_dict(ora_data["model"])
+        if "ema" in ora_data and ora_data["ema"] is not None:
+            ora_model.encoder.load_state_dict(ora_data["ema"])
         ora_planner = CEMPlanner(
             dynamics=ora_model,
             horizon=args.cem_horizon,
